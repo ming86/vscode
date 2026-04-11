@@ -70,7 +70,7 @@ Four layers, each with a distinct role. Violating the boundary between them is t
 | Layer | Responsibility | Examples |
 |-------|---------------|----------|
 | **React 19** (shell) | Layout, composition, controls, chat UI chrome | Message list container, session sidebar, input area, approval dialogs |
-| **Specialized engines** | Own hot paths where React's reconciler is too slow | CodeMirror 6 for editing/diffs, @tanstack/virtual for large lists |
+| **Specialized engines** | Own hot paths where React's reconciler is too slow | CodeMirror 6 for editing/diffs, @tanstack/react-virtual for large lists |
 | **Web Workers** | Heavy computation off the main thread | Diff computation, markdown parsing, tree indexing, syntax highlighting |
 | **Degradation thresholds** | Circuit breakers that prevent the app from freezing | Disable highlighting above 50K lines, paginate above 500 messages |
 
@@ -82,9 +82,9 @@ The following matrix summarizes every hot path. Detailed requirements for each f
 
 | # | Use Case | Expected Scale | React Owns | Engine Owns | Degradation Trigger |
 |---|----------|---------------|------------|-------------|---------------------|
-| 1 | Chat message list | 10–5,000+ messages | Virtualized container, scroll logic | @tanstack/virtual (row rendering) | >500 total: paginate. >200 visible: window to 50. |
+| 1 | Chat message list | 10–5,000+ messages | Virtualized container, scroll logic | @tanstack/react-virtual (row rendering) | >500 total: paginate. >200 visible: window to 50. |
 | 2 | Token streaming | 30–60 tokens/sec | Streaming message mount | ref + rAF flush | >30/sec: buffer to rAF boundary |
-| 3 | File tree | 100–100K+ nodes | Expand/collapse UI | @tanstack/virtual + TreeWorker | >50K nodes: worker-only traversal |
+| 3 | File tree | 100–100K+ nodes | Expand/collapse UI | @tanstack/react-virtual + TreeWorker | >50K nodes: worker-only traversal |
 | 4 | Code editing | 1–500K+ lines | Mount/unmount CM6 | CodeMirror 6 (text, selection, undo) | >50K: no highlighting. >500K: chunk-load. |
 | 5 | File diffs | 1–100K+ lines | Hunk summary, expand/collapse | CM6 @codemirror/merge + DiffWorker | >10K: hunk-by-hunk. >100K: summary only. |
 | 6 | Long-running sessions | Days–months of history | Session list chrome | REST pagination + events.jsonl streaming | >5MB events.jsonl: server-side pagination only |
@@ -97,7 +97,7 @@ Sessions span days, weeks, or months — potentially 1,000–5,000+ messages con
 |-----------|-------------|
 | **Scale** | Min: 10 messages. Typical: 50–200. Max: 5,000+ |
 | **React responsibility** | Mount the virtualized container. Memoize message rows (`React.memo` + stable keys). Manage scroll-to-bottom logic. |
-| **Specialized engine** | `@tanstack/virtual`. Only render visible messages + small overscan buffer. |
+| **Specialized engine** | `@tanstack/react-virtual`. Only render visible messages + small overscan buffer. |
 | **Loading strategy** | Paginated: load last 50 messages initially; load older on scroll-up via `?before=turnId`. |
 | **Markdown parsing** | Worker-parsed. Never block the main thread with `remark`/`rehype` pipelines on large messages. |
 | **Row height** | Dynamic measurement via `ResizeObserver`. Messages vary wildly in height — no fixed-row-height assumption. |
@@ -174,7 +174,7 @@ Monorepo projects can have 100K+ files. The webapp exposes the project file tree
 |-----------|-------------|
 | **Scale** | Min: 100 files. Typical: 1K–10K. Max: 100K+ |
 | **React responsibility** | Mount the virtualized list. Handle expand/collapse toggle events. |
-| **Specialized engine** | Flatten tree to linear array for `@tanstack/virtual`. Async expand/collapse. |
+| **Specialized engine** | Flatten tree to linear array for `@tanstack/react-virtual`. Async expand/collapse. |
 | **Worker delegation** | Tree indexing, fuzzy search, and path filtering run in `TreeWorker`. |
 | **Cardinal prohibition** | Never iterate all 100K nodes on the main thread. Ever. |
 | **Search** | Fuzzy search over file paths. Worker maintains a pre-built index. Results streamed back as they match. |
@@ -231,7 +231,7 @@ The defining characteristic of this application. Sessions accumulate state over 
 | **Session history** | REST endpoint returns last N turns (default 50), with `?before=turnId` for older. Never load entire history at once. |
 | **`events.jsonl`** | Can be several MB. Never load fully into memory on the frontend. Server-side pagination only for files >5MB. |
 | **Session list** | Must handle 100+ sessions with temporal grouping (Today, Yesterday, This Week, Older). |
-| **Session list rendering** | Virtualized. `@tanstack/virtual` with section headers as sticky items. |
+| **Session list rendering** | Virtualized. `@tanstack/react-virtual` with section headers as sticky items. |
 | **Memory management** | Evict message content for sessions not currently active. Keep only metadata (id, title, timestamp) in the Zustand store for inactive sessions. |
 | **Archival** | Consider compacting old sessions. Sessions with >1000 turns should be eligible for summary-and-archive. |
 
@@ -281,7 +281,7 @@ Concrete limits. When a threshold is crossed, the corresponding degradation is a
 
 | Metric | Threshold | Degradation Strategy | Detection Point |
 |--------|-----------|---------------------|-----------------|
-| Messages in view | >200 visible | Force virtualization window to 50 | `@tanstack/virtual` overscan config |
+| Messages in view | >200 visible | Force virtualization window to 50 | `@tanstack/react-virtual` overscan config |
 | Code block lines | >50K | Disable syntax highlighting | Code block renderer, line count check |
 | Code block lines | >500K | Chunk-load, read-only mode | Code block renderer, line count check |
 | Diff lines | >10K | Hunk-by-hunk expansion only | Diff viewer, post-worker result |
@@ -375,7 +375,7 @@ graph TB
     end
 
     subgraph Engines["Specialized Engines (own their DOM)"]
-        TV["@tanstack/virtual<br/>─────────────────<br/>• Message list virtualization<br/>• File tree virtualization<br/>• Session list virtualization<br/>Dynamic row heights via ResizeObserver"]
+        TV["@tanstack/react-virtual<br/>─────────────────<br/>• Message list virtualization<br/>• File tree virtualization<br/>• Session list virtualization<br/>Dynamic row heights via ResizeObserver"]
         CM["CodeMirror 6<br/>─────────────────<br/>• Editable code regions<br/>• @codemirror/merge for diffs<br/>• Side-by-side & unified modes<br/>Owns text state, selection, undo"]
         SH["Shiki<br/>─────────────────<br/>• Read-only code block highlighting<br/>• VS Code–compatible themes<br/>• Worker mode (HighlightWorker)<br/>Produces static HTML"]
     end
@@ -401,7 +401,7 @@ sequenceDiagram
     participant WS as WebSocket
     participant Store as Zustand Store
     participant React as React Shell
-    participant TV as @tanstack/virtual
+    participant TV as @tanstack/react-virtual
     participant CM as CodeMirror 6
     participant Worker as Web Worker
 
@@ -441,7 +441,7 @@ For reference — the complete system from browser to Copilot API:
 ```mermaid
 graph TB
     subgraph Browser["Browser (mobile-first: 440×956 primary)"]
-        SPA["React 19 SPA<br/>─────────────────<br/>Zustand state • @tanstack/virtual<br/>CodeMirror 6 • Shiki<br/>Vaul • Radix • shadcn/ui AI"]
+        SPA["React 19 SPA<br/>─────────────────<br/>Zustand state • @tanstack/react-virtual<br/>CodeMirror 6 • Shiki<br/>Vaul • Radix • shadcn/ui AI"]
     end
 
     subgraph NodeProcess["Node.js Process (single)"]
@@ -511,7 +511,7 @@ Constraints arising from the system architecture, process model, and component b
 | ARC-10 | **Hybrid alignment with VS Code source.** Mirror VS Code's chat file naming conventions (1:1 mapping: `ChatMarkdownContentPart.tsx` ↔ `chatMarkdownContentPart.ts`), copy enums/constants/CSS token values directly, and maintain `VS_CODE_ALIGNMENT.md` as a living mapping file. All rendering must be reimplemented in React (VS Code's DI graph with 26+ injected services makes direct code reuse impossible), but the file structure must remain diffable against upstream. | VS Code and Copilot CLI evolve rapidly. Without structural alignment, every upstream change requires reverse-engineering. With it, developers can `diff` against VS Code source to identify what changed and merge/migrate new features efficiently. This is the single most important constraint for long-term maintainability. | File naming: `src/components/chat/` mirrors `src/vs/workbench/contrib/chat/browser/`. Types: copy from `chat/common/`. CSS: extract token values from `chatColors.ts` and `chat.css`. Alignment map: `VS_CODE_ALIGNMENT.md` at project root tracks every mirrored file. Automated drift detection: CI script compares alignment map against VS Code source. See Doc 06 §2.3 and Doc 07 §1. |
 | ARC-01 | **Single Node.js process.** The webapp runs as one process — HTTP server, WebSocket server, SDK integration, and MCP tool host coexist in the same event loop. | Simplicity. No IPC overhead. But requires careful async management to avoid blocking the event loop. | Long-running synchronous operations (e.g., large file reads) must be async or worker-delegated. Never block the event loop. |
 | ARC-03 | **WebSocket is the primary real-time channel.** All streaming events (message deltas, tool state changes, approval requests) flow through a single WebSocket connection per client. | Avoids polling. Enables sub-second latency for streaming. | Frontend must maintain a persistent WebSocket connection with reconnection logic (exponential backoff: 1s → 2s → 4s → 8s → max 30s). |
-| ARC-02 | **React 19 is the shell, not the engine.** React manages layout, composition, and controls. It does not manage text editing state, diff computation, syntax highlighting, or large-list rendering internals. | React's reconciler is too slow for per-keystroke updates, per-token streaming, or 100K-node tree traversal. Specialized engines exist for these tasks. | CodeMirror 6 owns editing. @tanstack/virtual owns list virtualization. Shiki owns highlighting. React mounts and controls these engines but does not micromanage their state. |
+| ARC-02 | **React 19 is the shell, not the engine.** React manages layout, composition, and controls. It does not manage text editing state, diff computation, syntax highlighting, or large-list rendering internals. | React's reconciler is too slow for per-keystroke updates, per-token streaming, or 100K-node tree traversal. Specialized engines exist for these tasks. | CodeMirror 6 owns editing. @tanstack/react-virtual owns list virtualization. Shiki owns highlighting. React mounts and controls these engines but does not micromanage their state. |
 | ARC-04 | **REST for CRUD, WebSocket for events.** Session list, session details, create, delete = REST. Streaming, subscriptions, approvals = WebSocket. | Clean separation of concerns. REST is cacheable and idempotent; WebSocket is stateful and real-time. | No mixing: don't poll REST for streaming state, don't use WebSocket for CRUD operations. |
 | ARC-05 | **Frontend and backend are a single deployable unit.** Vite builds the SPA into `dist/`, which Hono serves as static files. One `npm start` launches everything. | Operational simplicity. No separate frontend deployment. No CORS in local mode. | Build pipeline must produce a single artifact. `vite build` output goes into the Hono static directory. |
 | ARC-06 | **MCP server runs on a Unix socket within the same process.** The SDK's MCP client connects to a Hono server listening on `/tmp/mcp-{uuid}/mcp.sock`. | Loopback within one process. No network exposure. Socket permissions (`0o600`) restrict access. | Unix socket lifecycle must be managed: create on startup, clean up on shutdown. Handle stale sockets from crashed processes. |
@@ -563,7 +563,7 @@ Implementation-level constraints on the frontend, backend, and communication lay
 |----|-----------|-----------|--------|
 | TCH-17 | **No `events.jsonl` writes from the webapp.** The SDK owns this file exclusively. | Concurrent writes corrupt the event log. The SDK does not use file locking. | Webapp reads `events.jsonl` (via SDK's `getSession` with `autoRestore`) but never writes to it directly. Use optional SQLite for webapp-specific persistence. |
 | TCH-01 | **React must not control CodeMirror text state.** No `value`/`onChange` pattern for editor content. React mounts the editor and passes configuration; CodeMirror owns the document. | React's reconciler on every keystroke causes visible input lag above ~10 WPM. CodeMirror's internal state management is purpose-built for text editing performance. | Use `@uiw/react-codemirror` or a controlled-ref pattern. React reads editor state on demand (e.g., on submit), never drives it. |
-| TCH-02 | **Virtualization is mandatory for the message list.** All messages must be rendered via `@tanstack/virtual`. No flat `Array.map()` rendering. | 1,000+ messages with rich content (markdown, code blocks, diffs) will freeze the browser if all are in the DOM simultaneously. | Dynamic row height measurement required — messages vary wildly in height. Overscan buffer of 3–5 items. Scroll-to-bottom must account for virtualized positioning. |
+| TCH-02 | **Virtualization is mandatory for the message list.** All messages must be rendered via `@tanstack/react-virtual`. No flat `Array.map()` rendering. | 1,000+ messages with rich content (markdown, code blocks, diffs) will freeze the browser if all are in the DOM simultaneously. | Dynamic row height measurement required — messages vary wildly in height. Overscan buffer of 3–5 items. Scroll-to-bottom must account for virtualized positioning. |
 | TCH-03 | **Streaming tokens must not trigger React re-renders per token.** Buffer in a ref, flush at `requestAnimationFrame`. | At 30–60 tokens/sec, per-token `setState` calls cause React to reconcile the entire streaming message 30–60 times per second. This blocks the main thread. | Streaming message component uses a ref-based accumulator. DOM updates happen via direct manipulation or `requestAnimationFrame` flush. Zustand state is committed only on completion or at 500ms intervals. |
 | TCH-04 | **Diff computation runs in a Web Worker.** Never on the main thread. | Diffing two 10K-line files can take 500ms–2s. On the main thread, this freezes the UI. | `DiffWorker` receives two strings, returns hunk array. The main thread renders the result. |
 | TCH-07 | **WebSocket reconnection with exponential backoff.** 1s → 2s → 4s → 8s → max 30s. Reset on successful connection. | Network interruptions (sleep, network switch, tunnel restart) are common on mobile. The app must recover without user intervention. | Show "Reconnecting..." banner during disconnection. Re-subscribe to active sessions on reconnect. Request state sync to recover missed events. |

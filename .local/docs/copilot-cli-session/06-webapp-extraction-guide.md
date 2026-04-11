@@ -157,13 +157,18 @@ This mapping enables automated drift detection: a CI script can diff the declare
 
 | Component | Package | Purpose |
 |-----------|---------|---------|
-| HTTP server | `hono` ^4.8 + `@hono/node-server` ^1.14 | REST endpoints, static file serving, MCP host |
-| WebSocket | `@hono/node-ws` ^1.2 | Bidirectional event relay (integrated with Hono) |
-| SDK | `@github/copilot` ^1.0.21 | Session management, model inference |
-| MCP | `@modelcontextprotocol/sdk` ^1.25.2 + `@hono/mcp` ^0.1 | Tool hosting via Hono MCP integration |
+| HTTP server | `hono` ^4.12.0 + `@hono/node-server` ^1.19.0 | REST endpoints, static file serving, MCP host |
+| WebSocket | `@hono/node-ws` ^1.3.0 | Bidirectional event relay (integrated with Hono) |
+| WebSocket (peer dep) | `ws` ^8.20.0 | Underlying WebSocket implementation required by `@hono/node-ws` |
+| SDK | `@github/copilot` ^1.0.24 | Session management, model inference |
+| MCP | `@modelcontextprotocol/sdk` ^1.29.0 + `@hono/mcp` ^0.2.0 | Tool hosting via Hono MCP integration |
 | UUID | `crypto.randomUUID()` | Nonce generation, session IDs |
-| SQLite | `better-sqlite3` ^12.8 | Optional file-edit persistence |
-| Markdown | `marked` ^18.0 | Server-side markdown→HTML for REST responses (optional) |
+| JWT auth | `jsonwebtoken` ^9.0.0 | Token verification for tunnel-mode authentication |
+| SQLite | `better-sqlite3` ^12.8.0 | Optional file-edit persistence |
+| Markdown | `marked` ^18.0.0 | Server-side markdown→HTML for REST responses (optional) |
+| TypeScript execution | `tsx` ^4.21.0 (dev) | Development: watch mode with full syntax support including enums |
+
+> **TypeScript execution strategy:** In development, `tsx` provides watch mode and full TypeScript support (including enums and decorators) without a compilation step. For production, compile via `tsc` to JavaScript then run with `node`. Type checking is a separate concern: run `tsc --noEmit` independently — it does not participate in the execution pipeline. Environment variables are loaded via Node's native `--env-file=.env` flag; no `dotenv` dependency is required.
 
 ### 3.2 SDK Integration Layer
 
@@ -940,12 +945,13 @@ The WebSocket connection at `/ws` uses a JSON-based message protocol. See [Secti
 | Styling | Tailwind CSS v4 + `@tailwindcss/vite` + `tw-animate-css` | Utility classes; no CSS-in-JS runtime overhead; v4 uses CSS-first config |
 | Chat UI base | **shadcn/ui AI components** (copy-paste, not dependency) | Streaming markdown, thinking blocks, tool call cards — pre-built patterns for LLM chat UX |
 | Interactive primitives | **Radix Primitives** (`@radix-ui/react-dialog`, `react-dropdown-menu`, `react-tooltip`, `react-scroll-area`, `react-separator`, `react-collapsible`, `react-toggle`, `react-visually-hidden`) | Accessible, unstyled, composable — no design system lock-in |
-| Mobile drawer | **Vaul** `^1.1.0` | Touch-friendly bottom sheet for session list on mobile; spring physics, drag-to-dismiss |
-| Command palette | **cmdk** `^1.0.0` | Fast fuzzy search for sessions, commands, model switching |
+| Mobile drawer | **Vaul** `^1.1.2` | Touch-friendly bottom sheet for session list on mobile; spring physics, drag-to-dismiss |
+| Command palette | **cmdk** `^1.1.0` | Fast fuzzy search for sessions, commands, model switching |
 | Markdown | `react-markdown` + `remark-gfm` + `rehype-raw` | Render assistant markdown with GFM tables, task lists, raw HTML blocks |
-| Syntax highlighting (read-only) | **Shiki** `^4.0.0` | High-fidelity, theme-accurate highlighting in code blocks (VS Code-compatible themes) |
-| Code editor (editable/diff) | **CodeMirror 6** (`@codemirror/view`, `@codemirror/state`, `@codemirror/merge`, `@uiw/react-codemirror`, `@uiw/react-codemirror-merge`) | 15-20× lighter than Monaco; mobile-friendly touch handling; tree-shakable; excellent diff merge view |
-| State | **Zustand** `^5.0.0` | Lightweight state management; stores session list, active chat, WebSocket state |
+| Syntax highlighting (read-only) | **Shiki** `^4.0.2` | High-fidelity, theme-accurate highlighting in code blocks (VS Code-compatible themes) |
+| Code editor (editable/diff) | **CodeMirror 6** (`@codemirror/view`, `@codemirror/state`, `@codemirror/merge`, `@uiw/react-codemirror`) | 15-20× lighter than Monaco; mobile-friendly touch handling; tree-shakable; diff views via `MergeView` from `@codemirror/merge` |
+| Virtualized lists | **@tanstack/react-virtual** `^3.13.0` | Renders only visible items in long session message lists; constant memory regardless of list length |
+| State | **Zustand** `^5.0.12` | Lightweight state management; stores session list, active chat, WebSocket state |
 | Icons | `lucide-react` | Clean, consistent iconography |
 | Utilities | `clsx` + `tailwind-merge` | Conditional class composition without conflicts |
 
@@ -1004,7 +1010,7 @@ Sessions can span days, weeks, or months, accumulating thousands of messages. Th
 |---------|-------|-----------|
 | Layout, composition, controls, chat UI | **React 19** | Component model, state management, declarative rendering |
 | Code editing and diff views | **CodeMirror 6** | Owns its own DOM subtree — React only mounts and controls it via refs |
-| Virtualized lists (messages, file trees) | **@tanstack/virtual** | Renders only visible items; constant memory regardless of list length |
+| Virtualized lists (messages, file trees) | **@tanstack/react-virtual** | Renders only visible items; constant memory regardless of list length |
 
 **Off-main-thread processing (Web Workers):**
 
@@ -1021,7 +1027,7 @@ Incoming message deltas are buffered in a `ref` (not state) and flushed to the D
 
 **Long session strategy:**
 
-Virtualization and pagination are non-negotiable for long-lived sessions. The message list uses `@tanstack/virtual` to render only the visible viewport (~10–15 messages). Older messages are fetched on demand via scroll-triggered pagination (see §9.8). The `events.jsonl` file is never loaded in full on the client; the server provides paginated slices.
+Virtualization and pagination are non-negotiable for long-lived sessions. The message list uses `@tanstack/react-virtual` to render only the visible viewport (~10–15 messages). Older messages are fetched on demand via scroll-triggered pagination (see §9.8). The `events.jsonl` file is never loaded in full on the client; the server provides paginated slices.
 
 ### 4.2 Session List View
 
@@ -1296,7 +1302,7 @@ sequenceDiagram
 
 ### 4.5 Diff Viewer
 
-When the `open_diff` MCP tool fires, the frontend displays a diff view using **CodeMirror 6's merge extension** (`@codemirror/merge` via `react-codemirror-merge`). On desktop, this renders as a side-by-side diff; on mobile (<640px), it collapses to a unified inline diff to conserve horizontal space.
+When the `open_diff` MCP tool fires, the frontend displays a diff view using **CodeMirror 6's merge extension** (`@codemirror/merge` (`MergeView`, mounted via React ref)). On desktop, this renders as a side-by-side diff; on mobile (<640px), it collapses to a unified inline diff to conserve horizontal space.
 
 ```
 Desktop (>1024px):
@@ -1334,25 +1340,34 @@ Mobile (<640px):
 **Implementation:** CodeMirror 6's `MergeView` from `@codemirror/merge` provides syntax-highlighted, editable diff views at a fraction of Monaco's bundle size. For read-only code blocks within chat messages, **Shiki** handles static syntax highlighting with zero runtime overhead.
 
 ```typescript
-import CodeMirrorMerge from '@uiw/react-codemirror-merge';
+import { MergeView } from '@codemirror/merge';
 import { javascript } from '@codemirror/lang-javascript';
+import { EditorView } from '@codemirror/view';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useRef, useEffect } from 'react';
 
 function DiffView({ original, modified, filePath, onRespond }: DiffViewProps) {
   const isMobile = useMediaQuery('(max-width: 639px)');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const view = new MergeView({
+      a: { doc: original, extensions: [javascript(), EditorView.editable.of(false)] },
+      b: { doc: modified, extensions: [javascript(), EditorView.editable.of(false)] },
+      parent: containerRef.current,
+      orientation: isMobile ? 'a-b' : 'b-a',  // 'a-b' = vertical stacking (mobile), 'b-a' = side-by-side (desktop)
+      collapseUnchanged: { margin: 3 },
+    });
+    return () => view.destroy();
+  }, [original, modified, isMobile]);
 
   return (
     <div className="flex flex-col rounded-lg border bg-background">
       <div className="flex items-center justify-between border-b px-3 py-2 text-sm">
         <span className="font-mono text-muted-foreground">{filePath}</span>
       </div>
-      <CodeMirrorMerge
-        orientation={isMobile ? 'a-b' : 'b-a'}  // 'a-b' = vertical stacking (mobile), 'b-a' = horizontal side-by-side (desktop)
-        collapseUnchanged={{ margin: 3 }}
-      >
-        <CodeMirrorMerge.Original value={original} extensions={[javascript()]} />
-        <CodeMirrorMerge.Modified value={modified} extensions={[javascript()]} />
-      </CodeMirrorMerge>
+      <div ref={containerRef} />
       <div className="flex justify-end gap-2 border-t px-3 py-2">
         <button onClick={() => onRespond(false)} className="btn-secondary">Reject</button>
         <button onClick={() => onRespond(true)} className="btn-primary">Accept</button>
@@ -2105,9 +2120,9 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 ```jsonc
 {
   "dependencies": {
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "@codemirror/view": "^6.36.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "@codemirror/view": "^6.41.0",
     "@codemirror/state": "^6.5.0",
     "@codemirror/language": "^6.11.0",
     "@codemirror/commands": "^6.8.0",
@@ -2121,7 +2136,6 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "@codemirror/lang-markdown": "^6.3.0",
     "@codemirror/merge": "^6.12.0",
     "@uiw/react-codemirror": "^4.25.0",
-    "@uiw/react-codemirror-merge": "^4.25.0",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",
     "@radix-ui/react-tooltip": "^1.1.0",
@@ -2132,22 +2146,22 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "@radix-ui/react-visually-hidden": "^1.1.0",
     "@tanstack/react-virtual": "^3.13.0",
     "vaul": "^1.1.0",
-    "cmdk": "^1.0.0",
+    "cmdk": "^1.1.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.0",
     "rehype-raw": "^7.0.0",
     "shiki": "^4.0.0",
     "lucide-react": "^1.8.0",
     "clsx": "^2.1.0",
-    "tailwind-merge": "^3.0.0",
+    "tailwind-merge": "^3.5.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
     "vite": "^8.0.0",
     "@vitejs/plugin-react": "^6.0.0",
     "typescript": "^6.0.0",
-    "tailwindcss": "^4.1.0",
-    "@tailwindcss/vite": "^4.1.0",
+    "tailwindcss": "^4.2.0",
+    "@tailwindcss/vite": "^4.2.0",
     "tw-animate-css": "^1.2.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0"
@@ -2160,27 +2174,29 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 ```jsonc
 {
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
-    "@github/copilot":               "^1.0.21",
-    "@modelcontextprotocol/sdk":     "^1.25.2",
-    "hono":                          "^4.8.0",
-    "@hono/node-server":             "^1.14.0",
-    "@hono/node-ws":                 "^1.2.0",
-    "@hono/mcp":                     "^0.1.0",
-    "ws":                            "^8.18.0",
+    "@github/copilot":               "^1.0.24",
+    "@modelcontextprotocol/sdk":     "^1.29.0",
+    "hono":                          "^4.12.0",
+    "@hono/node-server":             "^1.19.0",
+    "@hono/node-ws":                 "^1.3.0",
+    "@hono/mcp":                     "^0.2.0",
+    "ws":                            "^8.20.0",
     "jsonwebtoken":                  "^9.0.0",
     "better-sqlite3":                "^12.8.0",
-    "dotenv":                        "^17.4.0"
+    "marked":                        "^18.0.0"
   },
   "devDependencies": {
-    "@types/node":                   "^25.6.0",
+    "@types/node":                   "^24.0.0",
     "@types/ws":                     "^8.5.0",
     "@types/better-sqlite3":         "^7.6.0",
     "@types/jsonwebtoken":           "^9.0.0",
+    "tsx":                           "^4.21.0",
+    "typescript":                    "^6.0.0",
     "eslint":                        "^10.2.0",
-    "prettier":                      "^3.4.0"
+    "prettier":                      "^3.8.0"
   }
 }
 ```
@@ -2189,7 +2205,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 
 | Requirement | Minimum | Recommended |
 |-------------|---------|-------------|
-| **Node.js** | 22.x (maintenance) | 24.x LTS |
+| **Node.js** | 24.x LTS | 24.x LTS (latest point release) |
 | **OS** | macOS 13+, Ubuntu 22.04+, Windows 11 (WSL2) | macOS 14+ (native Unix socket support) |
 | **RAM** | 512 MB (backend only) | 1 GB (with frontend build) |
 | **Disk** | 100 MB (node_modules) + session data | 500 MB |
@@ -2206,7 +2222,7 @@ copilot-webapp/
 ├── tsconfig.backend.json
 ├── tsconfig.frontend.json
 ├── vite.config.ts
-├── .env                         # COPILOT_WEBAPP_PORT, AUTH_MODE, etc.
+├── .env                         # COPILOT_WEBAPP_PORT, AUTH_MODE, etc. (loaded via node --env-file=.env)
 ├── src/
 │   ├── backend/
 │   │   ├── index.ts             # Entry point: Hono + @hono/node-ws + SDK setup

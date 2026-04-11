@@ -2045,7 +2045,7 @@ React serves as the layout shell; computationally intensive hot paths are delega
 |---|---|---|
 | **React 19** | Layout composition, controls, chat message containers, settings UI | Standard React rendering; no hot-path work |
 | **CodeMirror 6** | Code editing, diff views | Owns its own DOM subtree; React only mounts/unmounts the container element |
-| **@tanstack/virtual** | Message list virtualization, file tree virtualization | Provides the windowing; React renders only visible items |
+| **@tanstack/react-virtual** | Message list virtualization, file tree virtualization | Provides the windowing; React renders only visible items |
 | **Web Workers** | Diff computation, markdown parsing (remark/rehype), syntax highlighting (Shiki worker mode), file tree indexing | Off-main-thread to prevent jank during streaming |
 
 ### Streaming Rendering Strategy
@@ -2060,13 +2060,13 @@ This decouples network event frequency from render frequency — delta events ma
 ### Virtualization Requirements
 
 **Message list:**
-- @tanstack/virtual with variable-height items.
+- @tanstack/react-virtual with variable-height items.
 - Only ~10–15 messages rendered in DOM at any time.
 - Scroll-to-bottom behavior: auto-scroll during streaming, cease on manual scroll-up.
 - Height measurement: `ResizeObserver` on each visible message row; cached for off-screen items.
 
 **File trees:**
-- Virtualized with @tanstack/virtual, collapsed by default.
+- Virtualized with @tanstack/react-virtual, collapsed by default.
 - Expand/collapse is a local state toggle that adjusts the virtual item list without remounting the tree.
 
 ### Degradation Thresholds
