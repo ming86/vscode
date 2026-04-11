@@ -1,5 +1,7 @@
 # UI Integration
 
+> Last updated: 2026-04-21
+
 How Copilot CLI (Background Agent) sessions surface in the VS Code UI — from declarative registration through session discovery, loading, continuation, rendering, and the full command/menu taxonomy.
 
 ---
@@ -397,8 +399,8 @@ Background sessions display with the label **"Background Agent"** in the status 
 | `sessions.changesVersionMode` | `string` | Version mode for change display (e.g., `'branchChanges'`) |
 | `config.github.copilot.chat.backgroundAgent.enabled` | `boolean` | Feature gate — entire copilotcli contribution is hidden when false |
 | `github.copilot.chat.copilotCLI.hasSession` | `boolean` | At least one CLI session is connected |
-| `ChatContextKeys.lockedCodingAgentId` | `string` | When set to `AgentSessionProviders.Background`, conditions execute actions |
-| `ChatContextKeys.remoteJobCreating` | `boolean` | True during "Continue In..." handoff |
+| `ChatContextKeys.lockedCodingAgentId` | `string` | When set to `AgentSessionProviders.Background`, conditions execute actions <!-- Unverified: inferred from VS Code source; may be internal and subject to change --> |
+| `ChatContextKeys.remoteJobCreating` | `boolean` | True during "Continue In..." handoff <!-- Unverified: inferred from VS Code source; may be internal and subject to change --> |
 
 ---
 

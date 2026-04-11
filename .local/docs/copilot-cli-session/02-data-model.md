@@ -1,5 +1,7 @@
 # Data Model and Persistence
 
+> Last updated: 2026-04-21
+
 This document catalogues the core types, persistence mechanisms, and session lifecycle that underpin Copilot CLI sessions within VS Code. The system employs a layered architecture: an observable UI facade (`ISession`), a wire-protocol state object (`ISessionState`), lightweight list metadata (`ISessionSummary`), and per-session SQLite storage (`ISessionDatabase`). Each layer serves a distinct consumer and carries different performance and consistency guarantees.
 
 ---

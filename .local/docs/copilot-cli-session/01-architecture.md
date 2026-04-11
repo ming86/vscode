@@ -1,5 +1,7 @@
 # System Architecture
 
+> Last updated: 2026-04-21
+
 ## Overview
 
 The system comprises four architectural layers and two external actors. Each layer has a distinct responsibility boundary, and communication between layers follows well-defined contracts.

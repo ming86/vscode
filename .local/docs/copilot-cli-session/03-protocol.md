@@ -1,5 +1,7 @@
 # Protocol and Communication
 
+> Last updated: 2026-04-21
+
 ## Two-Channel Architecture
 
 Two distinct communication channels operate between VS Code and its Copilot CLI infrastructure:
@@ -46,7 +48,7 @@ Events flow from the SDK to VS Code via an EventEmitter pattern. Each event carr
 
 | Event | Direction | Purpose |
 |-------|-----------|---------|
-| `permission.requested` | SDK → VS Code | Permission for tool execution. Resolved via `session.respondToPermission(requestId, response)` where response is `{ kind: 'approved' }` or `{ kind: 'denied-interactively-by-user' }` |
+| `permission.requested` | SDK → VS Code | Permission for tool execution. Handled via the `onPermissionRequest` callback provided at session creation time. The callback receives the request and returns a `PermissionRequestResult` (`"approved"` or `"denied-interactively-by-user"`) |
 | `exit_plan_mode.requested` | SDK → VS Code | Transition out of plan mode |
 | `user_input.requested` | SDK → VS Code | Agent solicits additional user input |
 | `session.title_changed` | SDK → VS Code | Auto-generated or updated session title |
@@ -72,12 +74,11 @@ Messages are dispatched to the SDK session via `send()` with typed options:
 interface SendOptions {
     prompt: string;
     attachments: Attachment[];
-    agentMode: 'interactive' | 'autopilot' | 'plan';
-    mode?: 'immediate';  // Steering: inject into running conversation
+    mode?: 'enqueue' | 'immediate';  // Message delivery steering
 }
 ```
 
-The `mode: 'immediate'` variant permits mid-conversation steering — injecting a message into an already-running exchange rather than queuing it.
+The `mode` field controls message delivery: `'enqueue'` (default) queues the message, while `'immediate'` injects it into an already-running exchange. Agent mode (interactive/plan/autopilot) is controlled separately via `session.rpc.mode.set({ mode: 'interactive' | 'plan' | 'autopilot' })`.
 
 ### Session Management
 

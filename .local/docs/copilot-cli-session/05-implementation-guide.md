@@ -1,6 +1,10 @@
 # Implementation Guide
 
+> Last updated: 2026-04-21
+
 A step-by-step guide for recreating the Copilot CLI session integration feature in another project. Each step is self-contained with rationale, interfaces, schemas, and pseudocode. No prior reading of the VS Code source is required.
+
+> **Scope Note:** This document describes VS Code's internal implementation using `@github/copilot/sdk` (VS Code's bundled SDK package). For standalone webapp implementation using the public `@github/copilot-sdk` package, see [06-webapp-extraction-guide.md](./06-webapp-extraction-guide.md). The SDK event types and API methods documented here apply to both packages — they share the same underlying SDK.
 
 ---
 
@@ -366,6 +370,8 @@ function createMcpServer(): { app: express.Application; socketPath: string; nonc
   const nonce = randomUUID();
 
   // Socket in a private temp directory
+  // VS Code convention: temp dir with `ide-mcp-` prefix.
+  // The standalone webapp uses `$XDG_RUNTIME_DIR/copilot/mcp-{uuid}/mcp.sock` instead (see doc 06).
   const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ide-mcp-'));
   fs.chmodSync(socketDir, 0o700);
   const socketPath = path.join(socketDir, 'mcp.sock');
@@ -774,62 +780,62 @@ class CopilotSessionWrapper {
   }
 
   private bindEvents(): void {
-    this.session.on('request.created', (event) => {
+    this.session.on('user.message', (event) => {
       const turn: Turn = {
-        id: event.turnId,
+        id: event.data.turnId,
         role: 'user',
-        content: [{ kind: 'text', value: event.prompt }],
+        content: [{ kind: 'text', value: event.data.prompt }],
         toolCalls: [],
         status: 'complete',
-        timestamp: Date.now(),
+        timestamp: event.timestamp, // ISO 8601 string
       };
       this.turns.push(turn);
       this.onTurnUpdate.fire(turn);
     });
 
-    this.session.on('response.created', (event) => {
+    this.session.on('assistant.turn_start', (event) => {
       const turn: Turn = {
-        id: event.turnId,
+        id: event.data.turnId,
         role: 'assistant',
         content: [],
         toolCalls: [],
         status: 'streaming',
-        timestamp: Date.now(),
+        timestamp: event.timestamp, // ISO 8601 string
       };
       this.activeTurn = turn;
       this.turns.push(turn);
       this.onTurnUpdate.fire(turn);
     });
 
-    this.session.on('response.contentDelta', (event) => {
+    this.session.on('assistant.message_delta', (event) => {
       if (!this.activeTurn) return;
-      this.appendContent(this.activeTurn, event.delta);
+      this.appendContent(this.activeTurn, event.data.delta);
       this.onTurnUpdate.fire(this.activeTurn);
     });
 
-    this.session.on('response.toolCall.created', (event) => {
+    this.session.on('tool.execution_start', (event) => {
       if (!this.activeTurn) return;
       const toolCall: ToolCall = {
-        id: event.toolCallId,
-        name: event.toolName,
-        arguments: event.arguments,
+        id: event.data.toolCallId,
+        name: event.data.toolName,
+        arguments: event.data.arguments,
         status: 'running',
       };
       this.activeTurn.toolCalls.push(toolCall);
       this.onTurnUpdate.fire(this.activeTurn);
     });
 
-    this.session.on('response.toolCall.completed', (event) => {
+    this.session.on('tool.execution_complete', (event) => {
       if (!this.activeTurn) return;
-      const tc = this.activeTurn.toolCalls.find(t => t.id === event.toolCallId);
+      const tc = this.activeTurn.toolCalls.find(t => t.id === event.data.toolCallId);
       if (tc) {
-        (tc as any).result = event.result;
+        (tc as any).result = event.data.result;
         (tc as any).status = 'complete';
       }
       this.onTurnUpdate.fire(this.activeTurn);
     });
 
-    this.session.on('response.completed', () => {
+    this.session.on('assistant.turn_end', (event) => {
       if (this.activeTurn) {
         (this.activeTurn as any).status = 'complete';
         this.onTurnUpdate.fire(this.activeTurn);
@@ -837,7 +843,7 @@ class CopilotSessionWrapper {
       }
     });
 
-    this.session.on('response.error', (event) => {
+    this.session.on('session.error', (event) => {
       if (this.activeTurn) {
         (this.activeTurn as any).status = 'error';
         this.onTurnUpdate.fire(this.activeTurn);
@@ -859,19 +865,19 @@ class CopilotSessionWrapper {
   async send(options: {
     prompt: string;
     attachments?: Attachment[];
-    agentMode?: 'interactive' | 'autopilot' | 'plan';
-    mode?: 'immediate';
+    mode?: 'interactive' | 'autopilot' | 'plan';
   }): Promise<void> {
+    if (options.mode) {
+      await this.session.rpc.mode.set({ mode: options.mode });
+    }
     await this.session.send({
       prompt: options.prompt,
       attachments: options.attachments ?? [],
-      agentMode: options.agentMode ?? 'interactive',
-      mode: options.mode,
     });
   }
 
   dispose(): void {
-    this.session.dispose();
+    this.session.disconnect();
   }
 }
 ```
@@ -903,7 +909,7 @@ class SharedSession {
     if (this.refCount <= 0) {
       this.refCount = 0;
       this.idleTimer = setTimeout(() => {
-        this.wrapper.dispose();
+        this.wrapper.disconnect();
         this.onDispose(this.sessionId);
       }, SharedSession.IDLE_TIMEOUT_MS);
     }
@@ -935,7 +941,7 @@ class SessionManager {
   delete(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
-      session.wrapper.dispose();
+      session.wrapper.disconnect();
       this.sessions.delete(sessionId);
     }
   }
@@ -956,8 +962,10 @@ CLI sessions persist their event stream to `events.jsonl`. Reconstruction reads 
 
 ```typescript
 interface SessionEventLine {
+  id: string;
   type: string;
-  timestamp: number;
+  timestamp: string; // ISO 8601
+  parentId?: string;
   data: Record<string, unknown>;
 }
 
@@ -978,7 +986,7 @@ async function reconstructHistory(eventsPath: string): Promise<Turn[]> {
     }
 
     switch (event.type) {
-      case 'request.created':
+      case 'user.message':
         turns.push({
           id: event.data.turnId as string,
           role: 'user',
@@ -989,7 +997,7 @@ async function reconstructHistory(eventsPath: string): Promise<Turn[]> {
         });
         break;
 
-      case 'response.created':
+      case 'assistant.turn_start':
         currentTurn = {
           id: event.data.turnId as string,
           role: 'assistant',
@@ -1001,7 +1009,7 @@ async function reconstructHistory(eventsPath: string): Promise<Turn[]> {
         turns.push(currentTurn);
         break;
 
-      case 'response.contentDelta':
+      case 'assistant.message_delta':
         if (currentTurn) {
           const last = currentTurn.content[currentTurn.content.length - 1];
           if (last?.kind === 'text') {
@@ -1012,14 +1020,14 @@ async function reconstructHistory(eventsPath: string): Promise<Turn[]> {
         }
         break;
 
-      case 'response.completed':
+      case 'assistant.turn_end':
         if (currentTurn) {
           (currentTurn as any).status = 'complete';
           currentTurn = undefined;
         }
         break;
 
-      case 'response.error':
+      case 'session.error':
         if (currentTurn) {
           (currentTurn as any).status = 'error';
           currentTurn = undefined;
@@ -1768,7 +1776,7 @@ const content = await agentHostClient.resourceRead('content://session/abc123/tur
 **Problem:** Auto-accepting a streaming edit before it is fully written produces a partial file.
 
 **Mitigation:**
-- Track the edit stream's completion status. Auto-accept only after the `response.completed` event for the tool call that produced the edit.
+- Track the edit stream's completion status. Auto-accept only after the `assistant.turn_end` event for the tool call that produced the edit.
 - For multi-file edits within a single tool call, wait for all files to be written before accepting any.
 
 ---
@@ -1834,7 +1842,7 @@ describe('Cross-Process Sync', () => {
     // Simulate external CLI process creating a session
     const sessionDir = path.join(os.homedir(), '.copilot', 'session-state', 'test-session');
     fs.mkdirSync(sessionDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), '{"type":"request.created"}\n');
+    fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), '{"id":"evt-1","type":"user.message","timestamp":"2025-01-01T00:00:00.000Z","data":{}}\n');
 
     const sessionId = await created;
     expect(sessionId).toBe('test-session');

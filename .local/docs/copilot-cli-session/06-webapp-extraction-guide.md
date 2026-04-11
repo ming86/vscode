@@ -10,6 +10,8 @@ A design document for building a **mobile-first** standalone web application (No
 
 > **Companion reference:** For the complete constraints catalog, performance budgets, and degradation thresholds, see [08-constraints-and-requirements.md](./08-constraints-and-requirements.md).
 
+> **Naming convention:** Type names in this document drop the `I` prefix used in VS Code's internal convention (e.g., `SessionSummary` here corresponds to VS Code's `ISessionSummary` in docs 01–05).
+
 ---
 
 ## Table of Contents
@@ -105,7 +107,7 @@ graph TB
 
 ### Process Model
 
-Unlike VS Code's multi-process architecture (main process, renderer, extension host), the webapp uses a **single Node.js process**. This simplifies IPC at the cost of requiring careful async management.
+Unlike VS Code's multi-process architecture (main process, renderer, extension host; simplified — see Doc 01 §6 for the full five-process model including Agent Host and External CLI), the webapp uses a **single Node.js process**. This simplifies IPC at the cost of requiring careful async management.
 
 ```mermaid
 graph LR
@@ -165,7 +167,7 @@ This mapping enables automated drift detection: a CI script can diff the declare
 | WebSocket | `@hono/node-ws` ^1.3.0 | Bidirectional event relay (integrated with Hono) |
 | WebSocket (peer dep) | `ws` ^8.20.0 | Underlying WebSocket implementation required by `@hono/node-ws` |
 | SDK | `@github/copilot-sdk` ^0.2.2 | Copilot SDK for session management (depends on `@github/copilot` CLI binary internally) |
-| Schema validation | `zod` ^3.25.0 | Parameter schemas for `defineTool()` |
+| Schema validation | `zod` ^4.3.6 | Parameter schemas for `defineTool()` (v4 required for `toJSONSchema()`) |
 | MCP | `@modelcontextprotocol/sdk` ^1.29.0 + `@hono/mcp` ^0.2.5 | Tool hosting via Hono MCP integration |
 | UUID | `crypto.randomUUID()` | Nonce generation, session IDs |
 | SQLite | `better-sqlite3` ^12.8.0 | Optional file-edit persistence |
@@ -403,11 +405,11 @@ async function handlePermissionRequest(
 async function handleUserInputRequest(
   request: { question: string; choices?: string[]; allowFreeform?: boolean },
   { sessionId }: { sessionId: string },
-): Promise<string> {
+): Promise<UserInputResponse> {
   const correlationId = crypto.randomUUID();
-  return new Promise<string>((resolve) => {
+  return new Promise<UserInputResponse>((resolve) => {
     pendingInputRequests.set(correlationId, (input: string) => {
-      resolve(input);
+      resolve({ answer: input, wasFreeform: true });
     });
     broadcast(sessionId, {
       type: 'approval.user_input_requested',
@@ -762,7 +764,7 @@ The SDK manages `~/.copilot/session-state/{sessionId}/events.jsonl` automaticall
 {"type":"assistant.message","data":{"content":"Hello, how can I help?"},"id":"evt_002","timestamp":"2026-06-21T12:00:01.000Z","parentId":"evt_001"}
 ```
 
-The webapp should **not** write to `events.jsonl` directly — the SDK handles persistence. For listing sessions, prefer `client.listSessions()` which returns `SessionMetadata[]`. The filesystem scan below is a fallback for discovering sessions the SDK hasn't loaded:
+The webapp should **not** write to `events.jsonl` directly — the SDK handles persistence. For listing sessions, prefer `client.listSessions()` which returns `SessionMetadata[]` (the SDK's native type); the webapp maps these to its own `SessionSummary[]` interface (see §2.1). The filesystem scan below is a fallback for discovering sessions the SDK hasn't loaded:
 
 ```typescript
 function listSessionsFromDisk(): Array<{ id: string; modifiedAt: number }> {
@@ -870,7 +872,7 @@ interface Turn {
   readonly timestamp: number;
 }
 
-// TurnContent types — see 02-data-model.md for the complete taxonomy
+// TurnContent types — webapp-defined wire format (see §6.1 below for variants)
 type TurnContent =
   | { type: 'markdownContent'; content: string }
   | { type: 'thinking'; content: string; collapsed?: boolean }
@@ -898,7 +900,6 @@ The WebSocket connection at `/ws` uses a JSON-based message protocol. See [Secti
 
 ---
 
-<!-- MOB-01 PERF-01 -->
 ## 4. Frontend Design
 
 ### 4.1 Technology Stack
@@ -1388,7 +1389,6 @@ The frontend reads `window.__COPILOT_NONCE__` and includes it as `Authorization:
 
 ---
 
-<!-- PERF-02 DAT-01 -->
 ## 6. Communication Protocol
 
 ### 6.1 WebSocket Message Types
@@ -1583,6 +1583,8 @@ type ServerMessage =
       name: string;
     };
 ```
+
+> **Why two title-change events?** The SDK emits `event.session.title_changed` when the AI auto-generates a conversation title during a turn. `session.name_updated` is a webapp-defined event fired when the user manually renames a session. Both are unified on the frontend — Doc 07 merges them into a single `session.title_changed` handler — but keeping them distinct at the transport layer lets the UI differentiate feedback: a subtle in-place update for auto-titles vs. a confirmation toast for explicit renames.
 
 ### 6.2 Message Sequence: Full Conversation Turn
 
@@ -2074,7 +2076,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "ws":                            "^8.20.0",
     "better-sqlite3":                "^12.8.0",
     "marked":                        "^18.0.0",
-    "zod":                           "^3.25.0"
+    "zod":                           "^4.3.6"
   },
   "devDependencies": {
     "@types/node":                   "^24.0.0",
