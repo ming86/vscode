@@ -73,6 +73,8 @@ graph TB
 | [`03-protocol.md`](03-protocol.md) | Communication channels, MCP protocol, SDK events, and synchronization |
 | [`04-ui-integration.md`](04-ui-integration.md) | Session list, loading flow, continuation, rendering, and commands |
 | [`05-implementation-guide.md`](05-implementation-guide.md) | Step-by-step guide for implementing in another project |
+| [`06-webapp-extraction-guide.md`](06-webapp-extraction-guide.md) | Design document for a standalone mobile-first webapp (Node.js + React 19) with full session management, MCP tool hosting, and optional remote access via cloudflared tunnel |
+| [`07-ui-specification.md`](07-ui-specification.md) | Complete UI/UX specification: design tokens, component catalog, responsive layouts, animations, accessibility, and state management |
 
 ## Key Design Principles
 
