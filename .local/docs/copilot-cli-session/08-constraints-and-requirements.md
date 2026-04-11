@@ -21,10 +21,10 @@ This document defines what the Copilot CLI Session webapp **must do**, **cannot 
 | `SDK-` | SDK/Platform constraints | 12 |
 | `ARC-` | Architecture constraints | 9 |
 | `SCP-` | Scope constraints | 6 |
-| `SEC-` | Security constraints | 12 |
+| `SEC-` | Security constraints | 11 |
 | `TCH-` | Technical constraints | 22 |
 | `OPS-` | Operational constraints | 12 |
-| **Total** | | **73** |
+| **Total** | | **72** |
 
 ---
 
@@ -508,13 +508,13 @@ Constraints arising from the system architecture, process model, and component b
 
 | ID | Constraint | Rationale | Impact |
 |----|-----------|-----------|--------|
+| ARC-10 | **Hybrid alignment with VS Code source.** Mirror VS Code's chat file naming conventions (1:1 mapping: `ChatMarkdownContentPart.tsx` ↔ `chatMarkdownContentPart.ts`), copy enums/constants/CSS token values directly, and maintain `VS_CODE_ALIGNMENT.md` as a living mapping file. All rendering must be reimplemented in React (VS Code's DI graph with 26+ injected services makes direct code reuse impossible), but the file structure must remain diffable against upstream. | VS Code and Copilot CLI evolve rapidly. Without structural alignment, every upstream change requires reverse-engineering. With it, developers can `diff` against VS Code source to identify what changed and merge/migrate new features efficiently. This is the single most important constraint for long-term maintainability. | File naming: `src/components/chat/` mirrors `src/vs/workbench/contrib/chat/browser/`. Types: copy from `chat/common/`. CSS: extract token values from `chatColors.ts` and `chat.css`. Alignment map: `VS_CODE_ALIGNMENT.md` at project root tracks every mirrored file. Automated drift detection: CI script compares alignment map against VS Code source. See Doc 06 §2.3 and Doc 07 §1. |
 | ARC-01 | **Single Node.js process.** The webapp runs as one process — HTTP server, WebSocket server, SDK integration, and MCP tool host coexist in the same event loop. | Simplicity. No IPC overhead. But requires careful async management to avoid blocking the event loop. | Long-running synchronous operations (e.g., large file reads) must be async or worker-delegated. Never block the event loop. |
 | ARC-03 | **WebSocket is the primary real-time channel.** All streaming events (message deltas, tool state changes, approval requests) flow through a single WebSocket connection per client. | Avoids polling. Enables sub-second latency for streaming. | Frontend must maintain a persistent WebSocket connection with reconnection logic (exponential backoff: 1s → 2s → 4s → 8s → max 30s). |
 | ARC-02 | **React 19 is the shell, not the engine.** React manages layout, composition, and controls. It does not manage text editing state, diff computation, syntax highlighting, or large-list rendering internals. | React's reconciler is too slow for per-keystroke updates, per-token streaming, or 100K-node tree traversal. Specialized engines exist for these tasks. | CodeMirror 6 owns editing. @tanstack/virtual owns list virtualization. Shiki owns highlighting. React mounts and controls these engines but does not micromanage their state. |
 | ARC-04 | **REST for CRUD, WebSocket for events.** Session list, session details, create, delete = REST. Streaming, subscriptions, approvals = WebSocket. | Clean separation of concerns. REST is cacheable and idempotent; WebSocket is stateful and real-time. | No mixing: don't poll REST for streaming state, don't use WebSocket for CRUD operations. |
 | ARC-05 | **Frontend and backend are a single deployable unit.** Vite builds the SPA into `dist/`, which Hono serves as static files. One `npm start` launches everything. | Operational simplicity. No separate frontend deployment. No CORS in local mode. | Build pipeline must produce a single artifact. `vite build` output goes into the Hono static directory. |
 | ARC-06 | **MCP server runs on a Unix socket within the same process.** The SDK's MCP client connects to a Hono server listening on `/tmp/mcp-{uuid}/mcp.sock`. | Loopback within one process. No network exposure. Socket permissions (`0o600`) restrict access. | Unix socket lifecycle must be managed: create on startup, clean up on shutdown. Handle stale sockets from crashed processes. |
-| ARC-07 | **Hybrid VS Code alignment strategy.** Mirror VS Code's file structure for content parts. Copy enums and constants. Reimplement rendering in React. | VS Code's large DI graph (dozens of services per widget) makes direct code reuse impossible. Structural alignment enables visual diffability and drift detection. | Maintain `VS_CODE_ALIGNMENT.md` as the single tracking artifact for CSS token mappings, content part additions, and file naming alignment. |
 | ARC-08 | **Lightweight provider interface for session management.** Abstract behind `SessionProvider` (~20 lines TypeScript). Current: single `CopilotCLIProvider`. | Future extensibility without over-engineering. A second provider may never materialize. | No provider registry. No dynamic loading. Add complexity only when warranted by a concrete second provider. |
 | ARC-09 | **Mobile-first responsive architecture.** All base styles target the narrowest viewport (440px). Wider layouts are additive via `min-width` breakpoints. | The primary use case is phone/tablet. Desktop is secondary. | Three breakpoints: Mobile (<640px), Tablet (640–1024px), Desktop (>1024px). Touch targets meet 44×44pt minimum (Apple HIG). |
 
@@ -549,7 +549,6 @@ Authentication, authorization, transport security, and sandboxing requirements.
 | SEC-04 | **MCP socket directory permissions: `0o700`. Socket permissions: `0o600`.** | The Unix socket carries MCP tool invocations — which include file reads, writes, and command execution. Unrestricted access would be a local privilege escalation vector. | `mkdirSync` with `mode: 0o700`. `chmodSync` socket to `0o600` after creation. |
 | SEC-05 | **CORS restricted to origin.** Local mode: `Access-Control-Allow-Origin: http://localhost:3000`. No wildcards. | Prevents cross-origin requests from other tabs or scripts. | Hono CORS middleware with explicit origin. |
 | SEC-06 | **Tunnel mode requires additional authentication.** Nonce is insufficient when the app is exposed via `cloudflared`. | The nonce would travel over the network. A static secret over the internet is inadequate. | Recommended: Cloudflare Access + JWT validation. Alternatives: Basic Auth (personal use), OAuth2 via GitHub, pre-shared token (last resort). |
-| SEC-07 | **Rate limiting in tunnel mode.** 60 requests/min per IP for REST. 30 messages/min for WebSocket. | Protects against abuse when the app is internet-accessible. | `hono-rate-limiter` middleware. WebSocket message counter with per-connection tracking. |
 | SEC-09 | **Short-lived session tokens in tunnel mode.** Issue JWTs with 1-hour expiry after initial authentication. Refresh on activity. | Limits the blast radius of a stolen token. | Token refresh logic in auth middleware. Frontend must handle 401 responses by re-authenticating. |
 | SEC-11 | **Tool execution sandboxing.** MCP tools that execute commands (`run_in_terminal`) must run within the session's `workingDirectory`. No path traversal above the project root. | The agent can invoke shell commands via MCP tools. Unrestricted execution is a remote code execution vector in tunnel mode. | Validate all paths are within `workingDirectory` before execution. Reject `../` traversal. |
 | SEC-12 | **No secrets in client-side code.** The nonce is the sole exception (injected into `index.html` at serve-time). No API keys, JWT secrets, or Cloudflare credentials in the SPA bundle. | Client-side JavaScript is fully inspectable. Any secret in the bundle is compromised by definition. | All sensitive values remain server-side. The frontend authenticates via the nonce or session token — never directly with external services. |
@@ -612,7 +611,7 @@ Constraints on deployment, runtime behavior, and operational management.
 
 Not all constraints carry equal weight. The following classification determines triage priority when constraints conflict with timeline or complexity.
 
-### 10.1 Hard Blockers (14)
+### 10.1 Hard Blockers (15)
 
 Violation of any of these prevents the application from functioning correctly. Non-negotiable. Do not defer, do not compromise, do not ship without them.
 
@@ -625,6 +624,7 @@ Violation of any of these prevents the application from functioning correctly. N
 | SDK-07 | Lock file protocol for session ownership | No session discovery, no VS Code handoff |
 | SDK-08 | Blocking MCP tool handlers (Promise-based) | Agent hangs waiting for tool response, session stalls |
 | SDK-11 | EventEmitter → WebSocket event relay | No streaming, no real-time updates |
+| ARC-10 | Hybrid alignment with VS Code source | Every upstream change requires reverse-engineering; no diffability, no efficient feature migration |
 | ARC-01 | Single Node.js process | Fundamental architecture violation |
 | ARC-03 | WebSocket as primary real-time channel | No streaming, no approvals, no live updates |
 | SEC-01 | Local mode binds to `127.0.0.1` only | Network-accessible without authentication |
@@ -666,7 +666,7 @@ Violation degrades polish, accessibility, or compliance — but core functionali
 
 All remaining constraints not listed in §10.1–§10.3 are **Standard** severity. They represent best practices and design decisions that should be followed but whose violation does not cause immediate failure. Deviations should be documented in the project's decision log.
 
-**44 constraints:** SDK-10, SDK-12, ARC-04, ARC-05, ARC-06, ARC-07, ARC-08, ARC-09, SCP-01, SCP-02, SCP-03, SCP-04, SCP-05, SCP-06, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-09, SEC-11, SEC-12, TCH-05, TCH-06, TCH-08, TCH-13, TCH-14, TCH-15, TCH-16, TCH-19, TCH-20, TCH-21, TCH-22, OPS-01, OPS-02, OPS-03, OPS-04, OPS-05, OPS-06, OPS-07, OPS-09, OPS-10, OPS-11, OPS-12.
+**42 constraints:** SDK-10, SDK-12, ARC-04, ARC-05, ARC-06, ARC-08, ARC-09, SCP-01, SCP-02, SCP-03, SCP-04, SCP-05, SCP-06, SEC-03, SEC-04, SEC-05, SEC-06, SEC-09, SEC-11, SEC-12, TCH-05, TCH-06, TCH-08, TCH-13, TCH-14, TCH-15, TCH-16, TCH-19, TCH-20, TCH-21, TCH-22, OPS-01, OPS-02, OPS-03, OPS-04, OPS-05, OPS-06, OPS-07, OPS-09, OPS-10, OPS-11, OPS-12.
 
 ---
 
@@ -711,7 +711,7 @@ Must satisfy to render any session content.
 | ARC-03 | WebSocket connection for real-time events |
 | ARC-04 | REST for CRUD, WebSocket for events — pattern set early |
 | ARC-05 | Single deployable unit (Vite build → Hono static) |
-| ARC-07 | Hybrid VS Code alignment strategy established from first component |
+| ARC-10 | Hybrid VS Code alignment — file naming, enums, alignment map, CI drift detection |
 | ARC-08 | Lightweight provider interface for session management |
 | ARC-09 | Mobile-first responsive layout from first component |
 | OPS-08 | Exclusive session ownership enforced |
@@ -755,7 +755,6 @@ Must satisfy for tunnel mode.
 | Constraint | Why This Phase |
 |-----------|---------------|
 | SEC-06 | Additional authentication for tunnel |
-| SEC-07 | Rate limiting |
 | SEC-08 | Content Security Policy |
 | SEC-09 | Short-lived session tokens |
 | SEC-11 | Tool execution sandboxing |
@@ -794,12 +793,12 @@ Quick lookup — which document section defines each constraint.
 | Category | IDs | Count | Source |
 |----------|-----|-------|--------|
 | SDK/Platform | SDK-01 through SDK-12 | 12 | Doc 06 §§2–3, §9 |
-| Architecture | ARC-01 through ARC-09 | 9 | Doc 06 §§2, 4; Doc 07 §§2, 7 |
+| Architecture | ARC-01 through ARC-10 | 9 | Doc 06 §§2, 4; Doc 07 §§2, 7 |
 | Scope | SCP-01 through SCP-06 | 6 | Doc 06 §§1, 8 |
-| Security | SEC-01 through SEC-12 | 12 | Doc 06 §5 |
+| Security | SEC-01 through SEC-12 (excluding SEC-07) | 11 | Doc 06 §5 |
 | Technical | TCH-01 through TCH-22 | 22 | Doc 06 §§4, 9; Doc 07 §§3–7 |
 | Operational | OPS-01 through OPS-12 | 12 | Doc 06 §§3, 7, 9 |
-| **Total** | | **73** | |
+| **Total** | | **72** | |
 
 ## Appendix C: Decision Log
 

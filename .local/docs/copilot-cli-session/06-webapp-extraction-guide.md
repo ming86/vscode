@@ -1307,7 +1307,6 @@ Desktop (>1024px):
 │  ─────────                 │  ─────────                      │
 │  import { verify } from... │  import { verify } from...     │
 │  import { config } from... │  import { config } from...     │
-│                            │+ import { rateLimit } from...   │
 │                            │                                 │
 │  export function auth() {  │  export function auth() {      │
 │-   const token = req...    │+   const token = extractTok... │
@@ -1322,7 +1321,6 @@ Mobile (<640px):
 ├────────────────────────────────┤
 │  import { verify } from...     │
 │  import { config } from...     │
-│+ import { rateLimit } from...  │
 │                                │
 │  export function auth() {      │
 │-   const token = req...        │
@@ -1475,7 +1473,6 @@ function authMiddleware(config: AuthConfig) {
 
 | Control | Implementation |
 |---------|---------------|
-| **Rate limiting** | `hono-rate-limiter`: 60 req/min per IP for REST, 30 msg/min for WS |
 | **CORS** | Set `Access-Control-Allow-Origin` to the tunnel hostname |
 | **CSP** | `Content-Security-Policy: default-src 'self'; connect-src 'self' wss://{tunnel-host}` |
 | **Session tokens** | Issue short-lived JWTs (1h expiry) after initial auth; refresh on activity |
@@ -1864,7 +1861,6 @@ sequenceDiagram
 | Auth middleware | Token-based auth for tunnel mode |
 | `cloudflared` integration | Startup script or npm script |
 | CORS configuration | Dynamic origin based on tunnel hostname |
-| Rate limiting | Per-IP limits for REST and WS |
 | WS auth | Token validation on upgrade |
 
 **Validation:** Access the webapp from a phone over a Cloudflare tunnel.
@@ -2176,8 +2172,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "ws":                            "^8.18.0",
     "jsonwebtoken":                  "^9.0.0",
     "better-sqlite3":                "^12.8.0",
-    "dotenv":                        "^17.4.0",
-    "hono-rate-limiter":             "^0.4.0"
+    "dotenv":                        "^17.4.0"
   },
   "devDependencies": {
     "@types/node":                   "^25.6.0",
