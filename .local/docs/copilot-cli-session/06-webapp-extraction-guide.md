@@ -6,6 +6,8 @@ A design document for building a **mobile-first** standalone web application (No
 
 > **Prerequisite reading:** [01-architecture.md](01-architecture.md) for the four-layer model, [03-protocol.md](03-protocol.md) for the wire protocol, [05-implementation-guide.md](05-implementation-guide.md) for session data model definitions.
 
+> **Companion reference:** For the complete constraints catalog, performance budgets, and degradation thresholds, see [08-constraints-and-requirements.md](./08-constraints-and-requirements.md).
+
 ---
 
 ## Table of Contents
@@ -127,6 +129,26 @@ The webapp collapses VS Code's four-layer architecture into two layers:
 | **Workbench Layer** — chat widget, diff editor, approval dialogs | **Frontend SPA** — React 19 + shadcn/ui AI + Radix + Vaul reimplementing the UI (mobile-first) |
 | **Platform Layer** — file service, configuration, telemetry | **Node.js stdlib** — `fs`, `path`, `os` directly; no abstraction needed |
 
+### Hybrid VS Code Alignment Strategy
+
+The webapp does not fork or wrap VS Code source. VS Code's rendering layer depends on a deep dependency-injection graph (dozens of services per widget), making direct code reuse impossible. Instead, the webapp adopts a **copy-and-reimplement** strategy:
+
+| What to copy verbatim | What to reimplement in React |
+|------------------------|------------------------------|
+| Enums and constants from `chat/common/constants.ts` | All rendering components — VS Code's DI graph is too deep to extract |
+| CSS custom-property token values (color, spacing, font) | Component composition and state management |
+| Animation `@keyframes` (pure CSS, no dependencies) | Event handling, streaming, and lifecycle |
+| File naming conventions for content part renderers | Touch interactions and responsive layouts |
+
+**File naming convention:** Frontend component files mirror VS Code's content part renderer names 1:1. For example, `ChatMarkdownContentPart.tsx` corresponds to VS Code's `chatMarkdownContentPart.ts`. This makes upstream change tracking mechanical rather than archaeological.
+
+**Drift detection:** Maintain a `VS_CODE_ALIGNMENT.md` mapping file in the project root. This file records:
+- Each copied constant/enum with its source path and last-synced VS Code commit SHA.
+- Each CSS token value with its origin in VS Code's theme definitions.
+- Each mirrored file name with its VS Code counterpart.
+
+This mapping enables automated drift detection: a CI script can diff the declared source paths against the current VS Code main branch and flag divergence.
+
 ---
 
 ## 3. Backend Design
@@ -183,6 +205,37 @@ function createSessionManager(config: SessionManagerConfig): LocalSessionManager
   return manager;
 }
 ```
+
+#### Provider Interface
+
+The SDK integration is accessed through a lightweight provider interface. The current implementation has a single concrete provider (Copilot SDK via `LocalSessionManager`), but the interface boundary enables future extensibility without a full registry pattern.
+
+```typescript
+interface SessionProvider {
+  id: string;
+  displayName: string;
+  createSession(options: CreateSessionOptions): Promise<Session>;
+  loadSession(sessionId: string): Promise<Session>;
+  listSessions(): Promise<SessionSummary[]>;
+}
+
+interface CreateSessionOptions {
+  workingDirectory: string;
+  model?: string;
+  instructions?: string;
+}
+
+interface SessionSummary {
+  id: string;
+  title: string;
+  lastActiveAt: Date;
+  messageCount: number;
+}
+```
+
+> **Note:** This shows the minimal session lifecycle methods. The full provider contract including `sendMessage()`, `abort()`, and event subscription is defined in [08-constraints-and-requirements.md](./08-constraints-and-requirements.md) §3.2.
+
+The webapp instantiates a single `CopilotSdkProvider` that wraps `LocalSessionManager`. All backend route handlers interact with this interface rather than the SDK types directly, keeping the coupling surface narrow.
 
 #### Session CRUD Operations
 
@@ -957,6 +1010,35 @@ The webapp uses a **mobile-first** responsive architecture. All base styles targ
 Both dark and light themes are supported, matching VS Code's **Dark Modern** and **Light Modern** color schemes. Theme selection follows the OS preference by default (`prefers-color-scheme`) with a manual toggle.
 
 Shiki and CodeMirror 6 both support VS Code-compatible themes, enabling consistent syntax highlighting across read-only blocks and editable regions.
+
+#### Performance Architecture
+
+Sessions can span days, weeks, or months, accumulating thousands of messages. The frontend must remain responsive under sustained load. The performance architecture assigns each concern to the technology best suited for it:
+
+**Rendering ownership:**
+
+| Concern | Owner | Rationale |
+|---------|-------|-----------|
+| Layout, composition, controls, chat UI | **React 19** | Component model, state management, declarative rendering |
+| Code editing and diff views | **CodeMirror 6** | Owns its own DOM subtree — React only mounts and controls it via refs |
+| Virtualized lists (messages, file trees) | **@tanstack/virtual** | Renders only visible items; constant memory regardless of list length |
+
+**Off-main-thread processing (Web Workers):**
+
+| Task | Worker strategy |
+|------|----------------|
+| Diff computation | Dedicated worker — avoids blocking UI during large file comparisons |
+| Markdown parsing (remark/rehype) | Shared worker — parse in background, post rendered AST to main thread |
+| Syntax highlighting | **Shiki worker mode** — tokenization runs off-thread; main thread receives pre-highlighted HTML |
+| File tree indexing | Dedicated worker — index construction and fuzzy search off main thread |
+
+**Streaming delta rendering:**
+
+Incoming message deltas are buffered in a `ref` (not state) and flushed to the DOM on each `requestAnimationFrame` tick. This coalesces rapid delta bursts into 30–60 fps visual updates. Only the active (streaming) message re-renders; all prior messages are stable React nodes that do not participate in reconciliation.
+
+**Long session strategy:**
+
+Virtualization and pagination are non-negotiable for long-lived sessions. The message list uses `@tanstack/virtual` to render only the visible viewport (~10–15 messages). Older messages are fetched on demand via scroll-triggered pagination (see §9.8). The `events.jsonl` file is never loaded in full on the client; the server provides paginated slices.
 
 ### 4.2 Session List View
 
@@ -2006,6 +2088,20 @@ function createReconnectingWebSocket(url: string): WebSocket {
 
 Consider: return the last N turns by default, with a `?before={turnId}` query parameter for older history.
 
+#### Degradation Thresholds
+
+When content exceeds the limits of interactive rendering, the frontend degrades gracefully rather than attempting to render everything:
+
+| Condition | Threshold | Behavior |
+|-----------|-----------|----------|
+| Code block | >50,000 lines | Disable syntax highlighting; render as plain monospaced text |
+| Diff view | >10,000 lines | Hunk-by-hunk rendering — collapse non-visible hunks; expand on click |
+| Diff view | >100,000 lines | Summary only — file list with change stats; no inline diff |
+| Session messages | >500 messages | Paginate — load newest 50 messages; fetch older batches on scroll-up |
+| `events.jsonl` | >5 MB | Server-side pagination only; no full client-side load |
+
+These thresholds are defined as constants in `chat/common/constants.ts` and shared between frontend and backend. The frontend checks payload size headers before committing to a rendering strategy.
+
 ---
 
 ## 10. Dependencies
@@ -2105,6 +2201,7 @@ Consider: return the last N turns by default, with a `?before={turnId}` query pa
 
 ```
 copilot-webapp/
+├── VS_CODE_ALIGNMENT.md          # Upstream mapping: copied constants, CSS tokens, file name parity
 ├── package.json
 ├── tsconfig.json
 ├── tsconfig.backend.json

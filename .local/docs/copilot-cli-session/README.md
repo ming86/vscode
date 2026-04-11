@@ -75,6 +75,7 @@ graph TB
 | [`05-implementation-guide.md`](05-implementation-guide.md) | Step-by-step guide for implementing in another project |
 | [`06-webapp-extraction-guide.md`](06-webapp-extraction-guide.md) | Design document for a standalone mobile-first webapp (Node.js + React 19) with full session management, MCP tool hosting, and optional remote access via cloudflared tunnel |
 | [`07-ui-specification.md`](07-ui-specification.md) | Complete UI/UX specification: design tokens, component catalog, responsive layouts, animations, accessibility, and state management |
+| [`08-constraints-and-requirements.md`](08-constraints-and-requirements.md) | Constraints catalog, performance architecture, degradation thresholds, and architectural decisions |
 
 ## Key Design Principles
 

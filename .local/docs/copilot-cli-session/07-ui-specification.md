@@ -468,6 +468,25 @@ app-shell (flex col, h-dvh)
 
 ## 3. Component Catalog
 
+### Hybrid VS Code Alignment — File Naming Convention
+
+Content-part React components mirror VS Code's source file naming 1:1, enabling visual `diff` between our React implementations and VS Code's imperative DOM code:
+
+| Our React Component | VS Code Source File |
+|---|---|
+| `ChatMarkdownContentPart.tsx` | `chatMarkdownContentPart.ts` |
+| `ChatCodeBlockContentPart.tsx` | `chatCodeBlockContentPart.ts` |
+| `ChatTreeContentPart.tsx` | `chatTreeContentPart.ts` |
+| `ChatThinkingContentPart.tsx` | `chatThinkingContent.ts` |
+| `ChatCodeBlockPillWidget.tsx` | `chatCodeBlockPillWidget.ts` |
+| `ChatConfirmationWidget.tsx` | `chatConfirmationWidget.ts` |
+
+**Alignment maintenance:**
+
+- Maintain a `VS_CODE_ALIGNMENT.md` mapping file tracking: our file → VS Code file → last synced VS Code commit SHA. This file is the single source of truth for drift detection.
+- CSS token values (Section 1.1) are copied from VS Code and maintained in a token mapping file. When VS Code updates token values, the mapping file flags drift for review.
+- Animation keyframes (Section 4) are copied verbatim from VS Code's CSS — pure CSS with zero dependencies, ensuring pixel-accurate behavior without abstraction overhead.
+
 ### 3.1 App Shell
 
 #### `ChatApp`
@@ -1998,6 +2017,71 @@ The following table maps every raw wire event from Doc 06 Section 6.1 to the abs
 | `connection.error` | `connectionStatus = 'error'` | WebSocket error |
 | `connection.reconnecting` | `connectionStatus = 'connecting'` | Auto-reconnect in progress |
 | `connection.established` | `connectionStatus = 'connected'` | Connected/reconnected |
+
+---
+
+## Performance Architecture
+
+React serves as the layout shell; computationally intensive hot paths are delegated to purpose-built engines that own their own DOM or run off-thread.
+
+### Rendering Responsibility Split
+
+| Layer | Handles | Notes |
+|---|---|---|
+| **React 19** | Layout composition, controls, chat message containers, settings UI | Standard React rendering; no hot-path work |
+| **CodeMirror 6** | Code editing, diff views | Owns its own DOM subtree; React only mounts/unmounts the container element |
+| **@tanstack/virtual** | Message list virtualization, file tree virtualization | Provides the windowing; React renders only visible items |
+| **Web Workers** | Diff computation, markdown parsing (remark/rehype), syntax highlighting (Shiki worker mode), file tree indexing | Off-main-thread to prevent jank during streaming |
+
+### Streaming Rendering Strategy
+
+1. Buffer incoming `assistant.message_delta` events in a React `ref` (not state).
+2. Flush buffered content to DOM at `requestAnimationFrame` boundary (30–60 fps).
+3. Only the active (currently streaming) message triggers re-renders.
+4. Completed messages are wrapped in `React.memo` and never re-render.
+
+This decouples network event frequency from render frequency — delta events may arrive faster than frame rate without causing excess reconciliation.
+
+### Virtualization Requirements
+
+**Message list:**
+- @tanstack/virtual with variable-height items.
+- Only ~10–15 messages rendered in DOM at any time.
+- Scroll-to-bottom behavior: auto-scroll during streaming, cease on manual scroll-up.
+- Height measurement: `ResizeObserver` on each visible message row; cached for off-screen items.
+
+**File trees:**
+- Virtualized with @tanstack/virtual, collapsed by default.
+- Expand/collapse is a local state toggle that adjusts the virtual item list without remounting the tree.
+
+### Degradation Thresholds
+
+| Condition | Threshold | Degraded Behavior | Detection |
+|---|---|---|---|
+| Code block | >50,000 lines | No syntax highlighting (plain `<pre>`) | Line count check before Shiki call |
+| Diff view | >10,000 lines | Hunk-by-hunk (collapse non-visible hunks) | Diff output line count |
+| Diff view | >100,000 lines | Summary only (file list + changed line counts) | Pre-diff file size check |
+| Session messages | >500 messages | Paginate — load newest 50; fetch older on scroll-up | Message count from session metadata |
+| `events.jsonl` | >5 MB | Server-side pagination only | File size check on session load |
+
+**Degradation UX:**
+
+- Show a subtle info banner when degraded mode activates: *"Large content — some features simplified for performance."*
+- Never silently degrade — the user must be informed.
+- Provide a "Load full content" escape hatch for code blocks (user-initiated, with a warning about potential UI stall).
+
+### Long Session Support
+
+Sessions can span days, weeks, or months with potentially thousands of messages. Virtualization and pagination are non-negotiable for this use case.
+
+| Concern | Strategy |
+|---|---|
+| **Initial load** | Fetch session metadata + newest 50 messages only |
+| **Older messages** | Loaded on demand — scroll-up triggers fetch of the next batch |
+| **Session switching** | Unmount previous message list, mount new one. Do not retain the previous session's DOM. |
+| **Memory pressure** | Evict off-screen message content parts (retain IDs and metadata for re-fetch) when total message count exceeds a configurable ceiling |
+
+> For the complete constraints catalog and performance budgets, see [08-constraints-and-requirements.md](./08-constraints-and-requirements.md).
 
 ---
 
