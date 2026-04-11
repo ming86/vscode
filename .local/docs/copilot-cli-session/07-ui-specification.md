@@ -4,7 +4,7 @@ Visual and interaction blueprint for the Copilot CLI Session webapp. A frontend 
 
 **Scope:** Copilot CLI session management — connect, resume, create, view sessions. No cloud agents, no GitHub remote copilot.
 
-**Primary target:** iPhone 16 Pro Max (430×932 logical pixels, 3× retina). Desktop secondary.
+**Primary target:** iPhone 16 Pro Max (440×956 logical pixels, 3× retina). Desktop secondary.
 
 **Stack:** React 19 · Vite · Tailwind CSS v4 · CodeMirror 6 · Radix Primitives · Vaul · shadcn/ui AI patterns · Shiki
 
@@ -99,7 +99,7 @@ VS Code defines chat font sizes as relative `em` units on a 13px base. The webap
 
 | Context | Value | Tailwind |
 |---|---|---|
-| Body text / markdown | `1.5em` | `leading-[1.5]` |
+| Body text / markdown | `1.5` | `leading-[1.5]` |
 | Headings | `normal` | `leading-normal` |
 | Code blocks | `1.4` | `leading-[1.4]` |
 | Compact list items | `17px` | `leading-[17px]` |
@@ -416,6 +416,14 @@ Session drawer (Vaul) slides up from bottom when `☰` is tapped:
 │  [+ New Session]             │ ← Fixed bottom CTA
 └──────────────────────────────┘
 ```
+
+#### Tablet Layout (640px–1024px)
+
+Single-column layout with a toggleable sidebar overlay:
+- Session list hidden by default, accessible via hamburger menu
+- Sidebar slides in as a 320px overlay from the left
+- Chat area takes full width when sidebar is hidden
+- Same component rendering as desktop, narrower containers
 
 #### Desktop (`> 1024px`)
 
@@ -750,6 +758,8 @@ interface ResponseMessage {
 }
 ```
 
+> **Note:** These interfaces are the canonical message types. The `Message` discriminated union in §7.1 (Zustand store) derives from these.
+
 **CSS:** `p-3 px-4 flex flex-col` (matches `.interactive-item-container { padding: 12px 16px }`).
 
 #### `RequestMessage`
@@ -840,7 +850,7 @@ interface MarkdownContentProps {
 **Rendering pipeline:** Raw markdown → `remark-gfm` → `rehype` → Shiki for fenced code → React components.
 
 **CSS (from chat.css):**
-- Body: `leading-[1.5em] text-base font-sans`
+- Body: `leading-[1.5] text-base font-sans`
 - Paragraphs: `mb-4` (margin: 0 0 16px 0)
 - Headings: h1 `text-[22px]`, h2 `text-[17px]`, h3 `text-[15px]` — all `font-semibold mt-6 mb-3.5`
 - Inline code: `font-mono text-xs text-code-fg bg-code-bg px-[3px] py-px rounded border border-code-border whitespace-pre-wrap`
@@ -911,7 +921,7 @@ The curved connector from header to first item uses a `border-left + border-bott
 
 **CSS:**
 - Container: `relative text-muted`
-- Thinking text: `text-sm px-3 py-1.5` (padding: 6px 12px 6px 24px)
+- Thinking text: `text-sm pl-6 pr-3 py-1.5` (padding: 6px 12px 6px 24px)
 - Collapse: Radix Collapsible with `grid-template-rows: 0fr → 1fr` transition
 
 #### `ToolInvocation`
@@ -1154,7 +1164,7 @@ interface ProgressIndicatorProps {
   width: 2em;
   white-space: nowrap;
   overflow: hidden;
-  animation: ellipsis steps(4, end) 1s infinite;
+  animation: ellipsis 1s steps(4, end) infinite;
 }
 ```
 
@@ -1199,7 +1209,7 @@ interface PermissionCardProps {
 └──────────────────────────────────────────────────┘
 ```
 
-**CSS (from chatConfirmationWidget.css):** Container: `mb-2 border border-border rounded-md`. Title bar: `border-b border-border px-2 py-1 flex justify-between`. Command area: `bg-chat-request-bg border-b border-border px-2.5 py-1.5`. Button row: `flex gap-2 px-2 py-1`.
+**CSS (from chatConfirmationWidget.css):** Container: `mb-2 border border-border rounded-md`. Title bar: `border-b border-border px-2 py-1 flex justify-between`. Command area: `bg-chat-request-bg border-b border-border px-2.5 py-1.5`. Button row: `flex gap-1 px-2 py-1`.
 
 **Accessibility:** `role="alertdialog"`, `aria-label="Permission request: {toolName}"`. Focus auto-set to Allow button on mount. Keyboard: Enter confirms, Escape denies.
 
@@ -1325,7 +1335,7 @@ type AgentMode = 'interactive' | 'autopilot' | 'plan';
 
 Implemented as a Radix DropdownMenu trigger button.
 
-**CSS:** `flex items-center gap-1 h-4 px-[7px] py-[3px] text-icon-fg`. Chevron: `text-[10px] ml-1 opacity-75`.
+**CSS:** `flex items-center gap-1 h-4 px-[7px] py-[3px] text-icon-fg`. Chevron: `text-[10px] ml-1 opacity-75`. Invisible hit area padded to 44×44pt minimum per §5.1.
 
 #### `AttachmentChips`
 
@@ -1398,7 +1408,7 @@ User or assistant avatar circle.
 ```typescript
 interface AvatarProps {
   type: 'user' | 'assistant';
-  size?: 'sm' | 'md'; // 18px | 24px
+  size?: 'sm' | 'md'; // 18px | 24px. Default: `md` (24px).
 }
 ```
 
@@ -1704,6 +1714,8 @@ function handleKeyboard(): void {
 }
 ```
 
+> **Note:** `theme_color` in manifest.json is static. Runtime theme adaptation uses `<meta name="theme-color">` updated by the theme switching logic.
+
 **Status bar styling:**
 - Dark theme: `<meta name="theme-color" content="#1e1e1e">`
 - Light theme: `<meta name="theme-color" content="#ffffff">`
@@ -1922,6 +1934,7 @@ interface Attachment {
   id: string;
   type: 'file' | 'symbol' | 'image' | 'problem';
   label: string;
+  icon?: React.ReactNode;
 }
 
 interface UsageInfo {
@@ -1971,6 +1984,8 @@ The following table maps every raw wire event from Doc 06 Section 6.1 to the abs
 | `event.assistant.message` | `message.response.complete` | Full turn content, ends stream |
 | `event.tool.execution_start` | `message.response.part` | New toolInvocation content part added |
 | `event.tool.execution_complete` | `message.response.part.update` | Tool state transitions to complete |
+
+> **Discriminator note:** Both `event.assistant.message_delta` and `event.tool.execution_complete` map to `message.response.part.update`. Discriminate by `partIndex` and `part.type` to route updates to the correct content part renderer.
 | `event.session.title_changed` | `session.title_changed` | Auto-generated or renamed title |
 | `event.session.error` | `session.error` | SDK or API failure |
 | `event.assistant.usage` | `usage.update` | Token counts for the response |
@@ -2020,7 +2035,7 @@ The following table maps every raw wire event from Doc 06 Section 6.1 to the abs
 
 ---
 
-## Performance Architecture
+## 8. Performance Architecture
 
 React serves as the layout shell; computationally intensive hot paths are delegated to purpose-built engines that own their own DOM or run off-thread.
 
@@ -2085,9 +2100,9 @@ Sessions can span days, weeks, or months with potentially thousands of messages.
 
 ---
 
-## 8. Visual Reference: VS Code Chat Anatomy
+## 9. Visual Reference: VS Code Chat Anatomy
 
-### 8.1 Chat Container (`.interactive-session`)
+### 9.1 Chat Container (`.interactive-session`)
 
 **VS Code approach:**
 ```css
@@ -2110,7 +2125,7 @@ Defines relative font size tokens (`--vscode-chat-font-size-body-*`) at this con
 
 Font size tokens are defined on `:root` since the webapp lacks VS Code's nested font-size inheritance.
 
-### 8.2 Message Container (`.interactive-item-container`)
+### 9.2 Message Container (`.interactive-item-container`)
 
 **VS Code approach:**
 ```css
@@ -2135,7 +2150,7 @@ Request messages: add `bg-chat-request-bg` class.
 
 **Mobile adaptation:** Padding reduced to `p-3 px-3` below 640px for more horizontal content space.
 
-### 8.3 Message Header (`.header`)
+### 9.3 Message Header (`.header`)
 
 **VS Code approach:**
 ```css
@@ -2173,7 +2188,7 @@ The `.user` container wraps avatar + username with `gap: 8px`. Toolbar is `posit
 
 **Mobile adaptation:** Toolbar always visible (no hover on touch devices). Uses `opacity-0 group-hover:opacity-100` on desktop, removed on mobile via `sm:opacity-0 sm:group-hover:opacity-100`.
 
-### 8.4 Input Area (`.interactive-input-part`)
+### 9.4 Input Area (`.interactive-input-part`)
 
 **VS Code approach:**
 ```css
@@ -2209,7 +2224,7 @@ The toolbar sits below the editor inside the input part, with `gap: 6px` and `ma
 
 **Mobile adaptation:** Input is bottom-anchored. The secondary toolbar (mode selector, context) wraps to a second row if space is insufficient, using `flex-wrap`.
 
-### 8.5 Scroll-to-Bottom Button (`.chat-scroll-down`)
+### 9.5 Scroll-to-Bottom Button (`.chat-scroll-down`)
 
 **VS Code approach:**
 ```css
@@ -2244,7 +2259,7 @@ The toolbar sits below the editor inside the input part, with `gap: 6px` and `ma
 
 **Mobile adaptation:** Positioned slightly higher (bottom-4) to avoid overlapping with the input area.
 
-### 8.6 Session List Items (`.agent-session-item`)
+### 9.6 Session List Items (`.agent-session-item`)
 
 **VS Code approach:**
 ```css
@@ -2305,7 +2320,7 @@ Rows use `border-radius: 6px`. Diff counts use `font-variant-numeric: tabular-nu
 
 **Mobile adaptation:** Touch target expanded to full row height (min 48px). Long-press triggers context menu rather than hover-revealed toolbar.
 
-### 8.7 Thinking Content (`.chat-thinking-box`)
+### 9.7 Thinking Content (`.chat-thinking-box`)
 
 **VS Code approach:** A nested tree structure with:
 1. A collapsible header button with title, optional shimmer, and diff counts.
@@ -2328,7 +2343,7 @@ The chain-of-thought line uses `mask-image: linear-gradient(...)` to create gaps
   width: 1px;
   background-color: var(--color-border);
   mask-image: linear-gradient(
-    to bottom, #000 0 5px, transparent 5px 25px, #000 24px 100%
+    to bottom, #000 0 5px, transparent 5px 25px, #000 25px 100%
   );
 }
 
@@ -2352,7 +2367,7 @@ The chain-of-thought line uses `mask-image: linear-gradient(...)` to create gaps
 
 **Mobile adaptation:** Connector line is slightly simplified — mask-image remains but left offset adjusts for narrower padding. Thinking items use smaller horizontal padding (`px-3` instead of `px-4`).
 
-### 8.8 Code Block Pills (`.chat-codeblock-pill-widget`)
+### 9.8 Code Block Pills (`.chat-codeblock-pill-widget`)
 
 **VS Code approach:** Inline pill with file icon, name, and ±line counts. Border with `1px solid var(--vscode-chat-requestBorder)`, `border-radius: 4px`, `padding: 1px 3px`. On hover, background changes to `list.hoverBackground` and text to `textLink.foreground`. A progress fill overlay animates width during streaming.
 
@@ -2379,7 +2394,7 @@ The chain-of-thought line uses `mask-image: linear-gradient(...)` to create gaps
 
 **Mobile adaptation:** No change required — pills are naturally touch-friendly at their rendered size, and no hover state is needed (tap activates).
 
-### 8.9 Confirmation Widget (`.chat-confirmation-widget2`)
+### 9.9 Confirmation Widget (`.chat-confirmation-widget2`)
 
 **VS Code approach:** A bordered card with:
 1. Title bar: `border-bottom`, `padding: 4px 8px`, flex layout with title and actions.

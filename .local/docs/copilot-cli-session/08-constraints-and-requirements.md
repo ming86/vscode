@@ -55,7 +55,7 @@ The user works on their project at their desk via VS Code. They step away — co
 |---------|-------------|
 | Sessions are **long-lived** | Days, weeks, potentially months. The message list can grow to thousands of entries. Pagination and virtualization are non-negotiable. |
 | **Same codebase** as VS Code | Lock file protocol enables handoff. The webapp reads/writes the same `~/.copilot/session-state/` directory. |
-| **Mobile-first** | 430×932 (iPhone 16 Pro Max) is the primary design viewport. Desktop is additive. |
+| **Mobile-first** | 440×956 (iPhone 16 Pro Max) is the primary design viewport. Desktop is additive. |
 | **Performance is first-class** | Not "nice to have." The app must not freeze, lag, or OOM on large sessions, big diffs, or huge file trees. |
 | **Degradation is a feature** | Gracefully reducing fidelity at defined thresholds is better than crashing or freezing. |
 
@@ -97,7 +97,7 @@ Sessions span days, weeks, or months — potentially 1,000–5,000+ messages con
 |-----------|-------------|
 | **Scale** | Min: 10 messages. Typical: 50–200. Max: 5,000+ |
 | **React responsibility** | Mount the virtualized container. Memoize message rows (`React.memo` + stable keys). Manage scroll-to-bottom logic. |
-| **Specialized engine** | `@tanstack/virtual` (or `react-virtuoso`). Only render visible messages + small overscan buffer. |
+| **Specialized engine** | `@tanstack/virtual`. Only render visible messages + small overscan buffer. |
 | **Loading strategy** | Paginated: load last 50 messages initially; load older on scroll-up via `?before=turnId`. |
 | **Markdown parsing** | Worker-parsed. Never block the main thread with `remark`/`rehype` pipelines on large messages. |
 | **Row height** | Dynamic measurement via `ResizeObserver`. Messages vary wildly in height — no fixed-row-height assumption. |
@@ -440,15 +440,15 @@ For reference — the complete system from browser to Copilot API:
 
 ```mermaid
 graph TB
-    subgraph Browser["Browser (mobile-first: 430×932 primary)"]
+    subgraph Browser["Browser (mobile-first: 440×956 primary)"]
         SPA["React 19 SPA<br/>─────────────────<br/>Zustand state • @tanstack/virtual<br/>CodeMirror 6 • Shiki<br/>Vaul • Radix • shadcn/ui AI"]
     end
 
     subgraph NodeProcess["Node.js Process (single)"]
-        HTTP["Express HTTP<br/>─────────────────<br/>Static files (SPA)<br/>REST API routes"]
+        HTTP["Hono HTTP<br/>─────────────────<br/>Static files (SPA)<br/>REST API routes"]
         WSS["WebSocket Server<br/>─────────────────<br/>ws library on /ws<br/>Event relay, subscriptions"]
         SDKI["SDK Integration<br/>─────────────────<br/>LocalSessionManager<br/>Session lifecycle<br/>Event dispatch"]
-        MCPS["MCP Tool Host<br/>─────────────────<br/>Express on Unix socket<br/>6 tools + push notifications"]
+        MCPS["MCP Tool Host<br/>─────────────────<br/>Hono on Unix socket<br/>6 tools + push notifications"]
         AUTH["Auth Middleware<br/>─────────────────<br/>Nonce (local) or<br/>JWT/CF Access (tunnel)"]
         MUTEX["Session Mutex<br/>─────────────────<br/>Per-session lock<br/>Serializes send() calls"]
     end
@@ -512,11 +512,11 @@ Constraints arising from the system architecture, process model, and component b
 | ARC-03 | **WebSocket is the primary real-time channel.** All streaming events (message deltas, tool state changes, approval requests) flow through a single WebSocket connection per client. | Avoids polling. Enables sub-second latency for streaming. | Frontend must maintain a persistent WebSocket connection with reconnection logic (exponential backoff: 1s → 2s → 4s → 8s → max 30s). |
 | ARC-02 | **React 19 is the shell, not the engine.** React manages layout, composition, and controls. It does not manage text editing state, diff computation, syntax highlighting, or large-list rendering internals. | React's reconciler is too slow for per-keystroke updates, per-token streaming, or 100K-node tree traversal. Specialized engines exist for these tasks. | CodeMirror 6 owns editing. @tanstack/virtual owns list virtualization. Shiki owns highlighting. React mounts and controls these engines but does not micromanage their state. |
 | ARC-04 | **REST for CRUD, WebSocket for events.** Session list, session details, create, delete = REST. Streaming, subscriptions, approvals = WebSocket. | Clean separation of concerns. REST is cacheable and idempotent; WebSocket is stateful and real-time. | No mixing: don't poll REST for streaming state, don't use WebSocket for CRUD operations. |
-| ARC-05 | **Frontend and backend are a single deployable unit.** Vite builds the SPA into `dist/`, which Express serves as static files. One `npm start` launches everything. | Operational simplicity. No separate frontend deployment. No CORS in local mode. | Build pipeline must produce a single artifact. `vite build` output goes into the Express static directory. |
-| ARC-06 | **MCP server runs on a Unix socket within the same process.** The SDK's MCP client connects to an Express server listening on `/tmp/mcp-{uuid}/mcp.sock`. | Loopback within one process. No network exposure. Socket permissions (`0o600`) restrict access. | Unix socket lifecycle must be managed: create on startup, clean up on shutdown. Handle stale sockets from crashed processes. |
+| ARC-05 | **Frontend and backend are a single deployable unit.** Vite builds the SPA into `dist/`, which Hono serves as static files. One `npm start` launches everything. | Operational simplicity. No separate frontend deployment. No CORS in local mode. | Build pipeline must produce a single artifact. `vite build` output goes into the Hono static directory. |
+| ARC-06 | **MCP server runs on a Unix socket within the same process.** The SDK's MCP client connects to a Hono server listening on `/tmp/mcp-{uuid}/mcp.sock`. | Loopback within one process. No network exposure. Socket permissions (`0o600`) restrict access. | Unix socket lifecycle must be managed: create on startup, clean up on shutdown. Handle stale sockets from crashed processes. |
 | ARC-07 | **Hybrid VS Code alignment strategy.** Mirror VS Code's file structure for content parts. Copy enums and constants. Reimplement rendering in React. | VS Code's large DI graph (dozens of services per widget) makes direct code reuse impossible. Structural alignment enables visual diffability and drift detection. | Maintain `VS_CODE_ALIGNMENT.md` as the single tracking artifact for CSS token mappings, content part additions, and file naming alignment. |
 | ARC-08 | **Lightweight provider interface for session management.** Abstract behind `SessionProvider` (~20 lines TypeScript). Current: single `CopilotCLIProvider`. | Future extensibility without over-engineering. A second provider may never materialize. | No provider registry. No dynamic loading. Add complexity only when warranted by a concrete second provider. |
-| ARC-09 | **Mobile-first responsive architecture.** All base styles target the narrowest viewport (430px). Wider layouts are additive via `min-width` breakpoints. | The primary use case is phone/tablet. Desktop is secondary. | Three breakpoints: Mobile (<640px), Tablet (640–1024px), Desktop (>1024px). Touch targets meet 44×44pt minimum (Apple HIG). |
+| ARC-09 | **Mobile-first responsive architecture.** All base styles target the narrowest viewport (440px). Wider layouts are additive via `min-width` breakpoints. | The primary use case is phone/tablet. Desktop is secondary. | Three breakpoints: Mobile (<640px), Tablet (640–1024px), Desktop (>1024px). Touch targets meet 44×44pt minimum (Apple HIG). |
 
 ---
 
@@ -541,15 +541,15 @@ Authentication, authorization, transport security, and sandboxing requirements.
 
 | ID | Constraint | Rationale | Impact |
 |----|-----------|-----------|--------|
-| SEC-01 | **Local mode binds to `127.0.0.1` only.** Reject connections from non-loopback addresses. | Threat model matches VS Code's: only local processes can connect. Binding to `0.0.0.0` would expose the app to the local network without authentication. | Express must bind to `127.0.0.1:3000`. No `0.0.0.0` binding in local mode. |
+| SEC-01 | **Local mode binds to `127.0.0.1` only.** Reject connections from non-loopback addresses. | Threat model matches VS Code's: only local processes can connect. Binding to `0.0.0.0` would expose the app to the local network without authentication. | Hono must bind to `127.0.0.1:3000`. No `0.0.0.0` binding in local mode. |
 | SEC-02 | **Nonce authentication in local mode.** Generate `crypto.randomUUID()` at startup. Require `Authorization: Nonce {uuid}` on all HTTP and WebSocket requests. | Same pattern as VS Code. Prevents other local processes from hijacking the session without the nonce. | Nonce printed to stdout on startup. Injected into `index.html` via placeholder replacement. Static assets served without nonce validation (the HTML shell delivers the nonce to the SPA). |
 | SEC-10 | **WebSocket authentication on upgrade.** Validate token during the `connection` event before accepting the WebSocket. | The WebSocket constructor does not support custom headers. Nonce/token must be passed as a query parameter (`?nonce={value}`) and validated on upgrade. | `ws` library's `verifyClient` callback must check authentication before completing the handshake. |
-| SEC-08 | **Content Security Policy.** `default-src 'self'; connect-src 'self' wss://{tunnel-host}`. | Prevents XSS via injected scripts. Limits connection targets. | CSP header set by Express middleware. Must be updated when tunnel hostname changes. |
-| SEC-03 | **Host header validation.** Reject requests where `Host` is not `localhost` or `127.0.0.1`. | DNS rebinding protection. A malicious website could otherwise make requests to `127.0.0.1:3000` via a crafted DNS record. | Express middleware must validate `Host` header on every request. |
+| SEC-08 | **Content Security Policy.** `default-src 'self'; connect-src 'self' wss://{tunnel-host}`. Ensure `script-src` includes `'nonce-{startup-nonce}'` to permit the injected startup script from SEC-02. | Prevents XSS via injected scripts. Limits connection targets. | CSP header set by Hono middleware. Must be updated when tunnel hostname changes. |
+| SEC-03 | **Host header validation.** Reject requests where `Host` is not `localhost` or `127.0.0.1`. | DNS rebinding protection. A malicious website could otherwise make requests to `127.0.0.1:3000` via a crafted DNS record. | Hono middleware must validate `Host` header on every request. |
 | SEC-04 | **MCP socket directory permissions: `0o700`. Socket permissions: `0o600`.** | The Unix socket carries MCP tool invocations — which include file reads, writes, and command execution. Unrestricted access would be a local privilege escalation vector. | `mkdirSync` with `mode: 0o700`. `chmodSync` socket to `0o600` after creation. |
-| SEC-05 | **CORS restricted to origin.** Local mode: `Access-Control-Allow-Origin: http://localhost:3000`. No wildcards. | Prevents cross-origin requests from other tabs or scripts. | Express CORS middleware with explicit origin. |
+| SEC-05 | **CORS restricted to origin.** Local mode: `Access-Control-Allow-Origin: http://localhost:3000`. No wildcards. | Prevents cross-origin requests from other tabs or scripts. | Hono CORS middleware with explicit origin. |
 | SEC-06 | **Tunnel mode requires additional authentication.** Nonce is insufficient when the app is exposed via `cloudflared`. | The nonce would travel over the network. A static secret over the internet is inadequate. | Recommended: Cloudflare Access + JWT validation. Alternatives: Basic Auth (personal use), OAuth2 via GitHub, pre-shared token (last resort). |
-| SEC-07 | **Rate limiting in tunnel mode.** 60 requests/min per IP for REST. 30 messages/min for WebSocket. | Protects against abuse when the app is internet-accessible. | `express-rate-limit` middleware. WebSocket message counter with per-connection tracking. |
+| SEC-07 | **Rate limiting in tunnel mode.** 60 requests/min per IP for REST. 30 messages/min for WebSocket. | Protects against abuse when the app is internet-accessible. | `hono-rate-limiter` middleware. WebSocket message counter with per-connection tracking. |
 | SEC-09 | **Short-lived session tokens in tunnel mode.** Issue JWTs with 1-hour expiry after initial authentication. Refresh on activity. | Limits the blast radius of a stolen token. | Token refresh logic in auth middleware. Frontend must handle 401 responses by re-authenticating. |
 | SEC-11 | **Tool execution sandboxing.** MCP tools that execute commands (`run_in_terminal`) must run within the session's `workingDirectory`. No path traversal above the project root. | The agent can invoke shell commands via MCP tools. Unrestricted execution is a remote code execution vector in tunnel mode. | Validate all paths are within `workingDirectory` before execution. Reject `../` traversal. |
 | SEC-12 | **No secrets in client-side code.** The nonce is the sole exception (injected into `index.html` at serve-time). No API keys, JWT secrets, or Cloudflare credentials in the SPA bundle. | Client-side JavaScript is fully inspectable. Any secret in the bundle is compromised by definition. | All sensitive values remain server-side. The frontend authenticates via the nonce or session token — never directly with external services. |
@@ -564,7 +564,7 @@ Implementation-level constraints on the frontend, backend, and communication lay
 |----|-----------|-----------|--------|
 | TCH-17 | **No `events.jsonl` writes from the webapp.** The SDK owns this file exclusively. | Concurrent writes corrupt the event log. The SDK does not use file locking. | Webapp reads `events.jsonl` (via SDK's `getSession` with `autoRestore`) but never writes to it directly. Use optional SQLite for webapp-specific persistence. |
 | TCH-01 | **React must not control CodeMirror text state.** No `value`/`onChange` pattern for editor content. React mounts the editor and passes configuration; CodeMirror owns the document. | React's reconciler on every keystroke causes visible input lag above ~10 WPM. CodeMirror's internal state management is purpose-built for text editing performance. | Use `@uiw/react-codemirror` or a controlled-ref pattern. React reads editor state on demand (e.g., on submit), never drives it. |
-| TCH-02 | **Virtualization is mandatory for the message list.** All messages must be rendered via `@tanstack/virtual` or `react-virtuoso`. No flat `Array.map()` rendering. | 1,000+ messages with rich content (markdown, code blocks, diffs) will freeze the browser if all are in the DOM simultaneously. | Dynamic row height measurement required — messages vary wildly in height. Overscan buffer of 3–5 items. Scroll-to-bottom must account for virtualized positioning. |
+| TCH-02 | **Virtualization is mandatory for the message list.** All messages must be rendered via `@tanstack/virtual`. No flat `Array.map()` rendering. | 1,000+ messages with rich content (markdown, code blocks, diffs) will freeze the browser if all are in the DOM simultaneously. | Dynamic row height measurement required — messages vary wildly in height. Overscan buffer of 3–5 items. Scroll-to-bottom must account for virtualized positioning. |
 | TCH-03 | **Streaming tokens must not trigger React re-renders per token.** Buffer in a ref, flush at `requestAnimationFrame`. | At 30–60 tokens/sec, per-token `setState` calls cause React to reconcile the entire streaming message 30–60 times per second. This blocks the main thread. | Streaming message component uses a ref-based accumulator. DOM updates happen via direct manipulation or `requestAnimationFrame` flush. Zustand state is committed only on completion or at 500ms intervals. |
 | TCH-04 | **Diff computation runs in a Web Worker.** Never on the main thread. | Diffing two 10K-line files can take 500ms–2s. On the main thread, this freezes the UI. | `DiffWorker` receives two strings, returns hunk array. The main thread renders the result. |
 | TCH-07 | **WebSocket reconnection with exponential backoff.** 1s → 2s → 4s → 8s → max 30s. Reset on successful connection. | Network interruptions (sleep, network switch, tunnel restart) are common on mobile. The app must recover without user intervention. | Show "Reconnecting..." banner during disconnection. Re-subscribe to active sessions on reconnect. Request state sync to recover missed events. |
@@ -594,7 +594,7 @@ Constraints on deployment, runtime behavior, and operational management.
 | ID | Constraint | Rationale | Impact |
 |----|-----------|-----------|--------|
 | OPS-08 | **Session ownership is exclusive.** Only one host should have a session loaded at a time. | The SDK does not support concurrent access to the same session from multiple processes. Concurrent writes to `events.jsonl` corrupt it. | Display a warning when opening a session owned by another host. Require explicit "take ownership" action. Update lock file accordingly. |
-| OPS-01 | **Single `npm start` launches everything.** Express serves static files, REST API, WebSocket, and MCP tool host from one process. | Operational simplicity. No separate frontend server. No process manager. No Docker-compose for local use. | Build step: `vite build` → `dist/`. Runtime: `node server.js` serves `dist/` and all API endpoints. |
+| OPS-01 | **Single `npm start` launches everything.** Hono serves static files, REST API, WebSocket, and MCP tool host from one process. | Operational simplicity. No separate frontend server. No process manager. No Docker-compose for local use. | Build step: `vite build` → `dist/`. Runtime: `node server.js` serves `dist/` and all API endpoints. |
 | OPS-02 | **Lock file cleanup on shutdown.** The webapp must delete its lock file when the process exits. | Stale lock files cause other hosts to believe the webapp is still running, preventing session handoff. | `process.on('exit')`, `process.on('SIGINT')`, `process.on('SIGTERM')` handlers delete the lock file. Best-effort — crash exits may leave stale files. |
 | OPS-03 | **Unix socket cleanup on shutdown.** Delete the MCP socket file and its parent directory on exit. | Stale sockets prevent the next instance from binding. | Same shutdown handlers as OPS-02. Also check for stale sockets on startup and clean up. |
 | OPS-04 | **Stale lock file detection.** When reading lock files from `~/.copilot/ide/`, validate that the `pid` is still alive (`process.kill(pid, 0)`). | Crashed processes leave lock files. The webapp must not treat them as active hosts. | `process.kill(pid, 0)` existence check. Dead PIDs → stale file → optionally clean up. |
@@ -710,7 +710,7 @@ Must satisfy to render any session content.
 | ARC-02 | React shell + engine boundary established from first component |
 | ARC-03 | WebSocket connection for real-time events |
 | ARC-04 | REST for CRUD, WebSocket for events — pattern set early |
-| ARC-05 | Single deployable unit (Vite build → Express static) |
+| ARC-05 | Single deployable unit (Vite build → Hono static) |
 | ARC-07 | Hybrid VS Code alignment strategy established from first component |
 | ARC-08 | Lightweight provider interface for session management |
 | ARC-09 | Mobile-first responsive layout from first component |
@@ -811,9 +811,9 @@ Architectural decisions that are not constraints per se, but inform why certain 
 | Shiki over CodeMirror for read-only blocks | Use CodeMirror for everything | Shiki (worker mode) | Shiki produces VS Code-identical highlighting. Worker mode keeps main thread free. CodeMirror is overkill for non-editable display. |
 | Vaul over custom drawer | Custom bottom sheet | Vaul | Production-grade spring physics, drag-to-dismiss, keyboard avoidance. Reimplementing gesture handling is high-effort, low-value. |
 | Zustand over Redux | Redux, Context + useReducer, MobX, Jotai | Zustand | Minimal API surface. No boilerplate. Fine-grained selectors. Works with React 19 concurrent features. |
-| Express over Fastify | Fastify, Hono, Koa | Express | Most mature ecosystem. MCP SDK examples use Express. `better-sqlite3` and `ws` have well-tested Express integrations. |
+| Hono over Express | Express, Fastify, Koa | Hono | Lightweight, Web Standards-based API (Request/Response). Native multi-runtime support (Node.js, Bun, Deno). `better-sqlite3` and `ws` integrate cleanly via Node.js adapter. |
 | Tailwind CSS v4 over CSS Modules | CSS Modules, styled-components, vanilla-extract | Tailwind CSS v4 | No CSS-in-JS runtime. CSS-first config via `@theme`. Utility classes co-locate style with markup. v4 uses native CSS cascade layers. |
 | shadcn/ui AI components | Build from scratch, use Ant Design, use MUI | shadcn/ui (copy-paste) | Pre-built LLM chat patterns (streaming, thinking blocks, tool cards). Copy-paste model means no dependency lock-in. Radix primitives underneath for accessibility. |
 | Single process over microservices | Separate frontend server, separate MCP server, worker threads | Single process | Operational simplicity. No IPC serialization overhead. One `npm start`. Worker threads considered and rejected — the SDK is not designed for multi-threaded access. |
-| ADR-09 | Hybrid VS Code alignment over forking | Fork VS Code chat module; Extract webview into standalone; Clean-room rewrite | **Hybrid alignment** | VS Code's DI coupling makes forking impossible. Clean-room loses visual fidelity. Hybrid mirrors file structure for diffability while reimplementing in React. |
-| ADR-10 | Lightweight provider interface over full registry | Full plugin registry with discovery; No abstraction layer | **Lightweight interface** | Single provider (Copilot SDK) doesn't justify registry overhead. Interface enables future extensibility without premature abstraction. |
+| Hybrid VS Code alignment over forking (ADR-09) | Fork VS Code chat module; Extract webview into standalone; Clean-room rewrite | **Hybrid alignment** | VS Code's DI coupling makes forking impossible. Clean-room loses visual fidelity. Hybrid mirrors file structure for diffability while reimplementing in React. |
+| Lightweight provider interface over full registry (ADR-10) | Full plugin registry with discovery; No abstraction layer | **Lightweight interface** | Single provider (Copilot SDK) doesn't justify registry overhead. Interface enables future extensibility without premature abstraction. |

@@ -1,10 +1,10 @@
 # 06 — Standalone Webapp Extraction Guide
 
-A design document for building a **mobile-first** standalone web application (Node.js backend + browser frontend) that provides full **Copilot CLI** session management — creating, viewing, continuing, and streaming sessions — independent of VS Code. The primary viewport target is iPhone 16 Pro Max (430×932 CSS pixels, 3× retina); desktop is a supported secondary layout. The webapp runs on the same machine as the Copilot CLI and may optionally be exposed to the network via `cloudflared tunnel`.
+A design document for building a **mobile-first** standalone web application (Node.js backend + browser frontend) that provides full **Copilot CLI** session management — creating, viewing, continuing, and streaming sessions — independent of VS Code. The primary viewport target is iPhone 16 Pro Max (440×956 CSS pixels, 3× retina); desktop is a supported secondary layout. The webapp runs on the same machine as the Copilot CLI and may optionally be exposed to the network via `cloudflared tunnel`.
 
 > **Scope:** This webapp connects to, resumes, and creates **Copilot CLI sessions only**. It does not integrate with GitHub cloud agents or the remote Copilot agent service. All session data is local to the machine running the Node.js process.
 
-> **Prerequisite reading:** [01-architecture.md](01-architecture.md) for the four-layer model, [03-protocol.md](03-protocol.md) for the wire protocol, [05-implementation-guide.md](05-implementation-guide.md) for session data model definitions.
+> **Prerequisite reading:** [01-architecture.md](01-architecture.md) for the four-layer model, [03-protocol.md](03-protocol.md) for the wire protocol, [05-implementation-guide.md](05-implementation-guide.md) for session data model definitions. See [07-ui-specification.md](./07-ui-specification.md) for component-level layout, design tokens, and interaction patterns.
 
 > **Companion reference:** For the complete constraints catalog, performance budgets, and degradation thresholds, see [08-constraints-and-requirements.md](./08-constraints-and-requirements.md).
 
@@ -55,7 +55,7 @@ A single Node.js process hosts three concerns:
 |---------|---------------|
 | **HTTP/WS Server** | Serves the frontend SPA, exposes REST endpoints, manages WebSocket connections |
 | **SDK Integration** | Drives `@github/copilot` SDK via `LocalSessionManager`, relays events |
-| **MCP Tool Host** | Runs an MCP server (Express on Unix socket) that the SDK connects to for tool invocations |
+| **MCP Tool Host** | Runs an MCP server (Hono on Unix socket) that the SDK connects to for tool invocations |
 
 ---
 
@@ -65,15 +65,15 @@ A single Node.js process hosts three concerns:
 
 ```mermaid
 graph TB
-    subgraph Browser["Browser (mobile-first: 430×932 primary)"]
-        FE["Frontend SPA<br/>─────────────────<br/>React 19 + Vite 6<br/>shadcn/ui AI + Radix + Vaul<br/>CodeMirror 6 + Shiki"]
+    subgraph Browser["Browser (mobile-first: 440×956 primary)"]
+        FE["Frontend SPA<br/>─────────────────<br/>React 19 + Vite 8<br/>shadcn/ui AI + Radix + Vaul<br/>CodeMirror 6 + Shiki"]
     end
 
     subgraph NodeProcess["Node.js Process"]
         WS["WebSocket Server<br/>─────────────────<br/>ws library on /ws<br/>Event relay, bidirectional RPC"]
-        REST["REST API<br/>─────────────────<br/>Express on :3000<br/>Session CRUD, static files"]
+        REST["REST API<br/>─────────────────<br/>Hono on :3000<br/>Session CRUD, static files"]
         SDK["SDK Integration<br/>─────────────────<br/>LocalSessionManager<br/>Session lifecycle, event dispatch"]
-        MCP["MCP Tool Host<br/>─────────────────<br/>Express on Unix socket<br/>6 tools + push notifications"]
+        MCP["MCP Tool Host<br/>─────────────────<br/>Hono on Unix socket<br/>6 tools + push notifications"]
         AUTH["Auth Middleware<br/>─────────────────<br/>Nonce (local) or<br/>Bearer token (tunnel)"]
     end
 
@@ -108,7 +108,7 @@ Unlike VS Code's multi-process architecture (main process, renderer, extension h
 graph LR
     subgraph SingleProcess["Node.js (single process)"]
         direction TB
-        A["Express HTTP Server"] --> B["WebSocket Upgrade Handler"]
+        A["Hono HTTP Server"] --> B["WebSocket Upgrade Handler"]
         A --> C["Static File Server (SPA)"]
         A --> D["REST API Routes"]
         B --> E["Session Event Relay"]
@@ -157,13 +157,13 @@ This mapping enables automated drift detection: a CI script can diff the declare
 
 | Component | Package | Purpose |
 |-----------|---------|---------|
-| HTTP server | `express` ^4.21 | REST endpoints, static file serving, MCP host |
-| WebSocket | `ws` ^8.18 | Bidirectional event relay |
+| HTTP server | `hono` ^4.8 + `@hono/node-server` ^1.14 | REST endpoints, static file serving, MCP host |
+| WebSocket | `@hono/node-ws` ^1.2 | Bidirectional event relay (integrated with Hono) |
 | SDK | `@github/copilot` ^1.0.21 | Session management, model inference |
-| MCP | `@modelcontextprotocol/sdk` ^1.25.2 | Tool hosting via StreamableHTTPServerTransport |
+| MCP | `@modelcontextprotocol/sdk` ^1.25.2 + `@hono/mcp` ^0.1 | Tool hosting via Hono MCP integration |
 | UUID | `crypto.randomUUID()` | Nonce generation, session IDs |
-| SQLite | `better-sqlite3` ^11.0 | Optional file-edit persistence |
-| Markdown | `marked` ^15.0 | Server-side markdown→HTML for REST responses (optional) |
+| SQLite | `better-sqlite3` ^12.8 | Optional file-edit persistence |
+| Markdown | `marked` ^18.0 | Server-side markdown→HTML for REST responses (optional) |
 
 ### 3.2 SDK Integration Layer
 
@@ -212,8 +212,7 @@ The SDK integration is accessed through a lightweight provider interface. The cu
 
 ```typescript
 interface SessionProvider {
-  id: string;
-  displayName: string;
+  name: string;
   createSession(options: CreateSessionOptions): Promise<Session>;
   loadSession(sessionId: string): Promise<Session>;
   listSessions(): Promise<SessionSummary[]>;
@@ -235,7 +234,7 @@ interface SessionSummary {
 
 > **Note:** This shows the minimal session lifecycle methods. The full provider contract including `sendMessage()`, `abort()`, and event subscription is defined in [08-constraints-and-requirements.md](./08-constraints-and-requirements.md) §3.2.
 
-The webapp instantiates a single `CopilotSdkProvider` that wraps `LocalSessionManager`. All backend route handlers interact with this interface rather than the SDK types directly, keeping the coupling surface narrow.
+The webapp instantiates a single `CopilotCLIProvider` that wraps `LocalSessionManager`. All backend route handlers interact with this interface rather than the SDK types directly, keeping the coupling surface narrow.
 
 #### Session CRUD Operations
 
@@ -441,8 +440,8 @@ The `@github/copilot` SDK expects an MCP endpoint for tool invocations. In VS Co
 #### Setup
 
 ```typescript
-import express from 'express';
-import { createServer } from 'node:http';
+import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mkdirSync, unlinkSync, existsSync, chmodSync } from 'node:fs';
@@ -455,27 +454,23 @@ interface McpConfig {
 }
 
 function createMcpToolHost(config: McpConfig): { start: () => void; stop: () => void } {
-  const app = express();
+  const app = new Hono();
 
   // ── Security middleware ──────────────────────────────────
-  app.use((req, res, next) => {
-    const auth = req.headers.authorization;
+  app.use('*', async (c, next) => {
+    const auth = c.req.header('authorization');
     if (auth !== `Nonce ${config.nonce}`) {
-      res.status(401).json({ error: 'Invalid nonce' });
-      return;
+      return c.json({ error: 'Invalid nonce' }, 401);
     }
 
     // DNS rebinding protection
-    const host = req.headers.host ?? '';
+    const host = c.req.header('host') ?? '';
     if (!host.startsWith('localhost') && !host.startsWith('127.0.0.1') && !host.includes('unix')) {
-      res.status(403).json({ error: 'Host not allowed' });
-      return;
+      return c.json({ error: 'Host not allowed' }, 403);
     }
 
-    next();
+    await next();
   });
-
-  app.use(express.json({ limit: '10mb' }));
 
   // ── MCP server instance ─────────────────────────────────
   const mcpServer = new McpServer({
@@ -486,13 +481,25 @@ function createMcpToolHost(config: McpConfig): { start: () => void; stop: () => 
   registerTools(mcpServer, config);
 
   // ── Transport binding ───────────────────────────────────
-  const transport = new StreamableHTTPServerTransport({ endpoint: '/mcp' });
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() });
   mcpServer.connect(transport);
 
-  // Bind transport routes
-  app.post('/mcp', transport.handleRequest.bind(transport));
-  app.get('/mcp', transport.handleRequest.bind(transport));
-  app.delete('/mcp', transport.handleRequest.bind(transport));
+  // Bind transport routes via Hono
+  app.post('/mcp', async (c) => {
+    const req = c.req.raw;
+    const res = await transport.handleRequest(req);
+    return res;
+  });
+  app.get('/mcp', async (c) => {
+    const req = c.req.raw;
+    const res = await transport.handleRequest(req);
+    return res;
+  });
+  app.delete('/mcp', async (c) => {
+    const req = c.req.raw;
+    const res = await transport.handleRequest(req);
+    return res;
+  });
 
   // ── Unix socket lifecycle ───────────────────────────────
   const socketDir = dirname(config.socketPath);
@@ -502,17 +509,20 @@ function createMcpToolHost(config: McpConfig): { start: () => void; stop: () => 
     unlinkSync(config.socketPath);
   }
 
-  const server = createServer(app);
+  let server: ReturnType<typeof serve>;
 
   return {
     start: () => {
-      server.listen(config.socketPath, () => {
+      server = serve({
+        fetch: app.fetch,
+        hostname: config.socketPath, // Unix socket path
+      }, () => {
         // Set socket permissions
         chmodSync(config.socketPath, 0o600);
       });
     },
     stop: () => {
-      server.close();
+      server?.close();
       if (existsSync(config.socketPath)) {
         unlinkSync(config.socketPath);
       }
@@ -529,11 +539,9 @@ The six tools must provide webapp equivalents of VS Code's functionality:
 function registerTools(server: McpServer, config: McpConfig): void {
   // ── 1. get_vscode_info → get_webapp_info ──────────────
   // Returns environment metadata so the agent knows its host.
-  server.registerTool(
+  server.tool(
     'get_webapp_info',
-    {
-      description: 'Returns information about the webapp host environment.',
-    },
+    'Returns information about the webapp host environment.',
     async () => ({
       content: [
         {
@@ -553,11 +561,9 @@ function registerTools(server: McpServer, config: McpConfig): void {
   // ── 2. get_selection → no-op / workspace context ──────
   // The webapp has no editor. Return empty or the last user-highlighted
   // text from the frontend (if the frontend tracks it).
-  server.registerTool(
+  server.tool(
     'get_selection',
-    {
-      description: 'Returns the currently selected text in the webapp (if any).',
-    },
+    'Returns the currently selected text in the webapp (if any).',
     async () => {
       const selection = currentFrontendSelection; // populated via WS from frontend
       return {
@@ -576,20 +582,14 @@ function registerTools(server: McpServer, config: McpConfig): void {
   // ── 3. open_diff ──────────────────────────────────────
   // Instead of opening a VS Code diff editor, pushes the diff to the
   // frontend and blocks until the user accepts or rejects.
-  server.registerTool(
+  server.tool(
     'open_diff',
+    'Opens a diff view in the webapp for user approval.',
     {
-      description: 'Opens a diff view in the webapp for user approval.',
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          filePath: { type: 'string', description: 'Absolute path of the file' },
-          originalContent: { type: 'string', description: 'Original file content' },
-          modifiedContent: { type: 'string', description: 'Proposed file content' },
-          description: { type: 'string', description: 'Description of the change' },
-        },
-        required: ['filePath', 'originalContent', 'modifiedContent'],
-      },
+      filePath: { type: 'string', description: 'Absolute path of the file' },
+      originalContent: { type: 'string', description: 'Original file content' },
+      modifiedContent: { type: 'string', description: 'Proposed file content' },
+      description: { type: 'string', description: 'Description of the change' },
     },
     async (params) => {
       // Push diff to frontend, await user decision
@@ -615,17 +615,11 @@ function registerTools(server: McpServer, config: McpConfig): void {
   );
 
   // ── 4. close_diff ─────────────────────────────────────
-  server.registerTool(
+  server.tool(
     'close_diff',
+    'Closes an open diff view in the webapp.',
     {
-      description: 'Closes an open diff view in the webapp.',
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          filePath: { type: 'string', description: 'Path of the diff to close' },
-        },
-        required: ['filePath'],
-      },
+      filePath: { type: 'string', description: 'Path of the diff to close' },
     },
     async (params) => {
       broadcast('*', {
@@ -641,16 +635,11 @@ function registerTools(server: McpServer, config: McpConfig): void {
   // Runs a linter or language server against the workspace and returns
   // diagnostics. Alternatively, delegates to the frontend if it hosts
   // a CodeMirror 6 editor with lint extensions.
-  server.registerTool(
+  server.tool(
     'get_diagnostics',
+    'Returns diagnostics (errors/warnings) for files in the workspace.',
     {
-      description: 'Returns diagnostics (errors/warnings) for files in the workspace.',
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          filePath: { type: 'string', description: 'File to diagnose (optional, all files if omitted)' },
-        },
-      },
+      filePath: { type: 'string', description: 'File to diagnose (optional, all files if omitted)' },
     },
     async (params) => {
       // Minimal implementation: run tsc --noEmit or eslint and parse output.
@@ -663,17 +652,11 @@ function registerTools(server: McpServer, config: McpConfig): void {
   );
 
   // ── 6. update_session_name ────────────────────────────
-  server.registerTool(
+  server.tool(
     'update_session_name',
+    'Updates the display name of the current session.',
     {
-      description: 'Updates the display name of the current session.',
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          name: { type: 'string', description: 'New session name' },
-        },
-        required: ['name'],
-      },
+      name: { type: 'string', description: 'New session name' },
     },
     async (params) => {
       broadcast('*', {
@@ -953,16 +936,16 @@ The WebSocket connection at `/ws` uses a JSON-based message protocol. See [Secti
 | Concern | Package(s) | Rationale |
 |---------|-----------|-----------|
 | Framework | React 19 + TypeScript | Component model fits session/chat UI well; hooks-first API |
-| Build tool | Vite 6 + `@vitejs/plugin-react` | Fast HMR, native TS support, trivial SSR-less SPA config |
+| Build tool | Vite 8 + `@vitejs/plugin-react` | Fast HMR, native TS support, trivial SSR-less SPA config |
 | Styling | Tailwind CSS v4 + `@tailwindcss/vite` + `tw-animate-css` | Utility classes; no CSS-in-JS runtime overhead; v4 uses CSS-first config |
 | Chat UI base | **shadcn/ui AI components** (copy-paste, not dependency) | Streaming markdown, thinking blocks, tool call cards — pre-built patterns for LLM chat UX |
 | Interactive primitives | **Radix Primitives** (`@radix-ui/react-dialog`, `react-dropdown-menu`, `react-tooltip`, `react-scroll-area`, `react-separator`, `react-collapsible`, `react-toggle`, `react-visually-hidden`) | Accessible, unstyled, composable — no design system lock-in |
 | Mobile drawer | **Vaul** `^1.1.0` | Touch-friendly bottom sheet for session list on mobile; spring physics, drag-to-dismiss |
 | Command palette | **cmdk** `^1.0.0` | Fast fuzzy search for sessions, commands, model switching |
 | Markdown | `react-markdown` + `remark-gfm` + `rehype-raw` | Render assistant markdown with GFM tables, task lists, raw HTML blocks |
-| Syntax highlighting (read-only) | **Shiki** `^3.0.0` | High-fidelity, theme-accurate highlighting in code blocks (VS Code-compatible themes) |
-| Code editor (editable/diff) | **CodeMirror 6** (`@codemirror/view`, `@codemirror/state`, `@codemirror/merge`, `@uiw/react-codemirror`, `react-codemirror-merge`) | 15-20× lighter than Monaco; mobile-friendly touch handling; tree-shakable; excellent diff merge view |
-| State | React 19 (`use`, `useOptimistic`, context) or Zustand | Lightweight state management; stores session list, active chat, WebSocket state |
+| Syntax highlighting (read-only) | **Shiki** `^4.0.0` | High-fidelity, theme-accurate highlighting in code blocks (VS Code-compatible themes) |
+| Code editor (editable/diff) | **CodeMirror 6** (`@codemirror/view`, `@codemirror/state`, `@codemirror/merge`, `@uiw/react-codemirror`, `@uiw/react-codemirror-merge`) | 15-20× lighter than Monaco; mobile-friendly touch handling; tree-shakable; excellent diff merge view |
+| State | **Zustand** `^5.0.0` | Lightweight state management; stores session list, active chat, WebSocket state |
 | Icons | `lucide-react` | Clean, consistent iconography |
 | Utilities | `clsx` + `tailwind-merge` | Conditional class composition without conflicts |
 
@@ -1353,7 +1336,7 @@ Mobile (<640px):
 **Implementation:** CodeMirror 6's `MergeView` from `@codemirror/merge` provides syntax-highlighted, editable diff views at a fraction of Monaco's bundle size. For read-only code blocks within chat messages, **Shiki** handles static syntax highlighting with zero runtime overhead.
 
 ```typescript
-import CodeMirrorMerge from 'react-codemirror-merge';
+import CodeMirrorMerge from '@uiw/react-codemirror-merge';
 import { javascript } from '@codemirror/lang-javascript';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
@@ -1393,7 +1376,7 @@ When running locally, the threat model is identical to VS Code's — only local 
 |---------|---------------|
 | **Binding** | `127.0.0.1:3000` — reject non-loopback |
 | **Nonce auth** | Generate `crypto.randomUUID()` at startup; require `Authorization: Nonce {uuid}` on all HTTP/WS requests |
-| **MCP socket** | Unix socket at `/tmp/mcp-{uuid}/mcp.sock` with `0o700` directory permissions |
+| **MCP socket** | Unix socket at `$XDG_RUNTIME_DIR/copilot/mcp-{uuid}/mcp.sock` (fallback: `/tmp/copilot/mcp-{uuid}/mcp.sock`) with `0o700` directory permissions |
 | **Host validation** | Reject requests where `Host` header is not `localhost` or `127.0.0.1` (DNS rebinding protection) |
 | **CORS** | `Access-Control-Allow-Origin: http://localhost:3000` — no wildcards |
 
@@ -1409,11 +1392,11 @@ Nonce: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 Static assets (HTML, JS, CSS) are served **without** nonce validation — the auth middleware must exempt the static file routes. The nonce is injected into the served `index.html` at startup so the SPA can attach it to all subsequent API and WebSocket requests:
 
 ```typescript
-// In the Express static file handler — inject nonce into the HTML shell
-app.get('/', (_req, res) => {
+// In the Hono static file handler — inject nonce into the HTML shell
+app.get('/', async (c) => {
   const html = readFileSync(resolve(__dirname, 'frontend/index.html'), 'utf-8')
     .replace('__NONCE_PLACEHOLDER__', config.nonce);
-  res.type('html').send(html);
+  return c.html(html);
 });
 
 // In index.html:
@@ -1431,7 +1414,7 @@ When exposed via `cloudflared tunnel`, nonce auth is insufficient — the nonce 
 | Option | Complexity | Security | Recommendation |
 |--------|-----------|----------|----------------|
 | **Cloudflare Access** | Medium | High | Preferred for teams. Zero-trust; identity-aware; no code changes. |
-| **Basic Auth (htpasswd)** | Low | Medium | Acceptable for personal use. Add Express middleware. |
+| **Basic Auth (htpasswd)** | Low | Medium | Acceptable for personal use. Add Hono middleware. |
 | **OAuth2 (GitHub)** | High | High | Natural fit since users already have GitHub accounts. |
 | **Pre-shared token** | Low | Low | Better than nonce, but still a static secret. Last resort. |
 
@@ -1440,6 +1423,7 @@ When exposed via `cloudflared tunnel`, nonce auth is insufficient — the nonce 
 ```typescript
 // ── Auth middleware for tunnel mode ────────────────────────────
 import { verify } from 'jsonwebtoken';
+import type { Context, Next } from 'hono';
 
 interface AuthConfig {
   readonly mode: 'local' | 'tunnel';
@@ -1449,37 +1433,40 @@ interface AuthConfig {
 }
 
 function authMiddleware(config: AuthConfig) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return async (c: Context, next: Next) => {
     if (config.mode === 'local') {
       // Nonce-based
-      if (req.headers.authorization !== `Nonce ${config.nonce}`) {
-        return res.status(401).json({ error: 'Invalid nonce' });
+      if (c.req.header('authorization') !== `Nonce ${config.nonce}`) {
+        return c.json({ error: 'Invalid nonce' }, 401);
       }
       return next();
     }
 
     // Tunnel mode: validate Cloudflare Access JWT
-    const cfAuth = req.headers['cf-access-jwt-assertion'] as string | undefined;
+    const cfAuth = c.req.header('cf-access-jwt-assertion');
     if (cfAuth && config.cloudflareTeamDomain) {
       // Validate against Cloudflare's JWKS endpoint
       // https://{team}.cloudflareaccess.com/cdn-cgi/access/certs
-      return validateCloudflareJwt(cfAuth, config.cloudflareTeamDomain)
-        .then(() => next())
-        .catch(() => res.status(403).json({ error: 'Invalid CF token' }));
+      try {
+        await validateCloudflareJwt(cfAuth, config.cloudflareTeamDomain);
+        return next();
+      } catch {
+        return c.json({ error: 'Invalid CF token' }, 403);
+      }
     }
 
     // Fallback: Bearer token
-    const bearer = req.headers.authorization?.replace('Bearer ', '');
+    const bearer = c.req.header('authorization')?.replace('Bearer ', '');
     if (bearer && config.jwtSecret) {
       try {
         verify(bearer, config.jwtSecret);
         return next();
       } catch {
-        return res.status(401).json({ error: 'Invalid token' });
+        return c.json({ error: 'Invalid token' }, 401);
       }
     }
 
-    return res.status(401).json({ error: 'Authentication required' });
+    return c.json({ error: 'Authentication required' }, 401);
   };
 }
 ```
@@ -1488,7 +1475,7 @@ function authMiddleware(config: AuthConfig) {
 
 | Control | Implementation |
 |---------|---------------|
-| **Rate limiting** | `express-rate-limit`: 60 req/min per IP for REST, 30 msg/min for WS |
+| **Rate limiting** | `hono-rate-limiter`: 60 req/min per IP for REST, 30 msg/min for WS |
 | **CORS** | Set `Access-Control-Allow-Origin` to the tunnel hostname |
 | **CSP** | `Content-Security-Policy: default-src 'self'; connect-src 'self' wss://{tunnel-host}` |
 | **Session tokens** | Issue short-lived JWTs (1h expiry) after initial auth; refresh on activity |
@@ -1572,6 +1559,7 @@ type ClientMessage =
   // ── Frontend context ────────────────────────────────────
   | {
       type: 'context.selection_changed';
+      sessionId: string;
       text: string;
       filePath: string;
     };
@@ -1817,7 +1805,7 @@ sequenceDiagram
 
 | Task | Deliverable |
 |------|-------------|
-| Project scaffolding | `npm init`, TypeScript config, Express + ws setup |
+| Project scaffolding | `npm init`, TypeScript config, Hono + `@hono/node-ws` setup |
 | SDK integration | `LocalSessionManager` creation, `createSession`, `loadSession` |
 | Event relay | Wire all SDK events to WebSocket broadcast |
 | REST endpoints | `GET /api/sessions`, `POST /api/sessions`, `DELETE /api/sessions/:id` |
@@ -1846,7 +1834,7 @@ sequenceDiagram
 
 | Task | Deliverable |
 |------|-------------|
-| MCP server setup | Express on Unix socket with nonce auth |
+| MCP server setup | Hono on Unix socket with nonce auth |
 | Tool registration | All 6 tools implemented |
 | Lock file management | Write on startup, clean up on exit |
 | Push notifications | Selection and diagnostics change forwarding |
@@ -1900,7 +1888,7 @@ sequenceDiagram
 
 | Subsystem | VS Code | Webapp | Notes |
 |-----------|---------|--------|-------|
-| **Design philosophy** | Desktop-first; Electron window fills screen | **Mobile-first**; 430×932 (iPhone 16 Pro Max) primary viewport; desktop secondary | All base styles target mobile; wider layouts additive |
+| **Design philosophy** | Desktop-first; Electron window fills screen | **Mobile-first**; 440×956 (iPhone 16 Pro Max) primary viewport; desktop secondary | All base styles target mobile; wider layouts additive |
 | **Process model** | Multi-process (main, renderer, extension host) | Single Node.js process | Simpler IPC; no Electron |
 | **SDK hosting** | Sessions Layer via `CopilotChatSessionsProvider`; extension host bridges SDK | Direct `LocalSessionManager` in main process | No provider registry needed |
 | **Session scope** | Copilot CLI sessions + cloud agents + remote copilot | **Copilot CLI sessions only** | No cloud agent or remote copilot integration |
@@ -2054,9 +2042,10 @@ If the browser's WebSocket connection drops (network hiccup, laptop sleep), the 
 4. On reconnect, re-subscribe to active sessions and request a state sync.
 
 ```typescript
-function createReconnectingWebSocket(url: string): WebSocket {
+function createReconnectingWebSocket(url: string): { get ws(): WebSocket; close(): void } {
   let ws: WebSocket;
   let reconnectDelay = 1000;
+  let closed = false;
 
   function connect() {
     ws = new WebSocket(url);
@@ -2070,6 +2059,7 @@ function createReconnectingWebSocket(url: string): WebSocket {
     };
 
     ws.onclose = () => {
+      if (closed) return;
       setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
         connect();
@@ -2078,7 +2068,15 @@ function createReconnectingWebSocket(url: string): WebSocket {
   }
 
   connect();
-  return ws; // Note: caller must handle the ws reference updating on reconnect.
+
+  // Return a wrapper so callers always access the current ws instance
+  return {
+    get ws() { return ws; },
+    close() {
+      closed = true;
+      ws?.close();
+    },
+  };
 }
 ```
 
@@ -2127,7 +2125,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "@codemirror/lang-markdown": "^6.3.0",
     "@codemirror/merge": "^6.12.0",
     "@uiw/react-codemirror": "^4.25.0",
-    "react-codemirror-merge": "^4.25.0",
+    "@uiw/react-codemirror-merge": "^4.25.0",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",
     "@radix-ui/react-tooltip": "^1.1.0",
@@ -2136,21 +2134,22 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "@radix-ui/react-collapsible": "^1.1.0",
     "@radix-ui/react-toggle": "^1.1.0",
     "@radix-ui/react-visually-hidden": "^1.1.0",
+    "@tanstack/react-virtual": "^3.13.0",
     "vaul": "^1.1.0",
     "cmdk": "^1.0.0",
-    "react-markdown": "^9.0.0",
+    "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.0",
     "rehype-raw": "^7.0.0",
-    "shiki": "^3.0.0",
-    "lucide-react": "^0.475.0",
+    "shiki": "^4.0.0",
+    "lucide-react": "^1.8.0",
     "clsx": "^2.1.0",
     "tailwind-merge": "^3.0.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "vite": "^6.3.0",
-    "@vitejs/plugin-react": "^4.4.0",
-    "typescript": "^5.8.0",
+    "vite": "^8.0.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "typescript": "^6.0.0",
     "tailwindcss": "^4.1.0",
     "@tailwindcss/vite": "^4.1.0",
     "tw-animate-css": "^1.2.0",
@@ -2164,23 +2163,28 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 
 ```jsonc
 {
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
     "@github/copilot":               "^1.0.21",
     "@modelcontextprotocol/sdk":     "^1.25.2",
-    "express":                       "^4.21.0",
+    "hono":                          "^4.8.0",
+    "@hono/node-server":             "^1.14.0",
+    "@hono/node-ws":                 "^1.2.0",
+    "@hono/mcp":                     "^0.1.0",
     "ws":                            "^8.18.0",
     "jsonwebtoken":                  "^9.0.0",
-    "better-sqlite3":                "^11.7.0",
-    "dotenv":                        "^16.4.0",
-    "express-rate-limit":            "^7.5.0"
+    "better-sqlite3":                "^12.8.0",
+    "dotenv":                        "^17.4.0",
+    "hono-rate-limiter":             "^0.4.0"
   },
   "devDependencies": {
-    "@types/node":                   "^22.0.0",
-    "@types/express":                "^4.17.0",
+    "@types/node":                   "^25.6.0",
     "@types/ws":                     "^8.5.0",
     "@types/better-sqlite3":         "^7.6.0",
     "@types/jsonwebtoken":           "^9.0.0",
-    "eslint":                        "^9.0.0",
+    "eslint":                        "^10.2.0",
     "prettier":                      "^3.4.0"
   }
 }
@@ -2190,7 +2194,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 
 | Requirement | Minimum | Recommended |
 |-------------|---------|-------------|
-| **Node.js** | 20.x LTS | 22.x LTS |
+| **Node.js** | 22.x (maintenance) | 24.x LTS |
 | **OS** | macOS 13+, Ubuntu 22.04+, Windows 11 (WSL2) | macOS 14+ (native Unix socket support) |
 | **RAM** | 512 MB (backend only) | 1 GB (with frontend build) |
 | **Disk** | 100 MB (node_modules) + session data | 500 MB |
@@ -2210,7 +2214,7 @@ copilot-webapp/
 ├── .env                         # COPILOT_WEBAPP_PORT, AUTH_MODE, etc.
 ├── src/
 │   ├── backend/
-│   │   ├── index.ts             # Entry point: Express + WS + SDK setup
+│   │   ├── index.ts             # Entry point: Hono + @hono/node-ws + SDK setup
 │   │   ├── sdk.ts               # LocalSessionManager wrapper
 │   │   ├── mcp.ts               # MCP tool host
 │   │   ├── ws.ts                # WebSocket handler + event relay
@@ -2270,7 +2274,7 @@ sequenceDiagram
     participant Main as index.ts
     participant MCP as MCP Tool Host
     participant SDK as LocalSessionManager
-    participant HTTP as Express Server
+    participant HTTP as Hono Server
     participant WS as WebSocket Server
     participant FS as Filesystem
 
@@ -2280,10 +2284,10 @@ sequenceDiagram
 
     Main->>SDK: createSessionManager({ mcpSocketPath, nonce })
     Main->>FS: writeLockFile({ socketPath, nonce, pid })
-    Main->>HTTP: Create Express app with auth middleware
+    Main->>HTTP: Create Hono app with auth middleware
     Main->>HTTP: Mount REST routes (/api/sessions, /health)
-    Main->>HTTP: Serve static files (frontend build)
-    Main->>WS: Create WebSocket server on HTTP upgrade
+    Main->>HTTP: Serve static files via serveStatic (frontend build)
+    Main->>WS: Configure WebSocket via @hono/node-ws
 
     HTTP->>HTTP: Listen on :3000
     Main->>Main: Log startup info (port, nonce)
@@ -2298,7 +2302,7 @@ async function gracefulShutdown(
   manager: LocalSessionManager,
   mcpHost: { stop: () => void },
   lockFilePath: string,
-  server: http.Server,
+  server: ReturnType<typeof import('@hono/node-server').serve>,
 ): Promise<void> {
   console.log('Shutting down...');
 
