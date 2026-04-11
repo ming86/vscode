@@ -12,6 +12,7 @@ Visual and interaction blueprint for the Copilot CLI Session webapp. A frontend 
 
 ---
 
+<!-- CONSTRAINT: ARC-10 — CSS token values sourced from VS Code (chatColors.ts, Dark/Light Modern themes) -->
 ## 1. Design System Foundation
 
 ### 1.1 Color Token Map
@@ -197,6 +198,7 @@ VS Code uses `var(--vscode-cornerRadius-medium)` and `var(--vscode-cornerRadius-
 | MD | `16px` | Action buttons, header icons |
 | LG | `20px` | Primary action buttons |
 
+<!-- CONSTRAINT: TCH-19 — Tailwind CSS v4 with CSS-first @theme configuration -->
 ### 1.5 Theme Implementation
 
 #### CSS Custom Property Approach
@@ -310,8 +312,11 @@ function applyTheme(theme: Theme): void {
 
 ---
 
+<!-- CONSTRAINT: ARC-09 — Mobile-first responsive architecture (440px base, additive breakpoints) -->
 ## 2. Responsive Layout Architecture
 
+<!-- CONSTRAINT: TCH-09 — interactive-widget=resizes-content viewport meta tag -->
+<!-- CONSTRAINT: TCH-10 — 100dvh for app shell height, not 100vh -->
 ### 2.1 Viewport Strategy
 
 ```html
@@ -478,6 +483,7 @@ app-shell (flex col, h-dvh)
 
 ## 3. Component Catalog
 
+<!-- CONSTRAINT: ARC-10 — Hybrid VS Code alignment: mirror file naming 1:1 for diffability -->
 ### Hybrid VS Code Alignment — File Naming Convention
 
 Content-part React components mirror VS Code's source file naming 1:1, enabling visual `diff` between our React implementations and VS Code's imperative DOM code:
@@ -565,6 +571,7 @@ h-11 flex items-center px-4 gap-2
 border-b border-border bg-surface
 ```
 
+<!-- CONSTRAINT: TCH-13 — Vaul for mobile bottom drawer with spring physics -->
 ### 3.2 Session Navigation
 
 #### `SessionDrawer`
@@ -708,6 +715,7 @@ flex items-center px-1.5
 
 Count: `opacity-70 mr-1 tabular-nums`
 
+<!-- CONSTRAINT: TCH-02 — Virtualization mandatory for message list (@tanstack/react-virtual) -->
 ### 3.3 Message List
 
 #### `MessageList`
@@ -836,6 +844,8 @@ hidden  /* shown via state: block */
 
 Icon: `ChevronDown` centered.
 
+<!-- CONSTRAINT: TCH-14 — CodeMirror 6 for diffs, not Monaco -->
+<!-- CONSTRAINT: TCH-15 — Shiki for read-only syntax highlighting -->
 ### 3.4 Content Parts
 
 #### `MarkdownContent`
@@ -1473,6 +1483,7 @@ Triggered via `Cmd+K` (Mac) / `Ctrl+K` (other).
 
 ---
 
+<!-- CONSTRAINT: TCH-12 — prefers-reduced-motion respected for all animations -->
 ## 4. Animation & Transitions
 
 ### 4.1 Thinking Shimmer
@@ -1568,6 +1579,7 @@ New messages fade in with a subtle upward slide:
 
 Applied only to the most recently appended message to avoid re-animating the entire list.
 
+<!-- CONSTRAINT: TCH-03 — Streaming tokens must not trigger React re-renders per token -->
 ### 4.4 Streaming Text
 
 CSS-only approach. A blinking cursor appears at the end of streaming content:
@@ -1627,6 +1639,7 @@ All state transitions use `150ms` to feel snappy without being jarring. The `wil
 
 ## 5. Mobile-Specific Patterns
 
+<!-- CONSTRAINT: TCH-11 — 44×44pt minimum touch targets (Apple HIG) -->
 ### 5.1 Touch Targets
 
 All interactive elements meet the 44×44pt minimum tap target (Apple HIG):
@@ -1662,6 +1675,7 @@ All interactive elements meet the 44×44pt minimum tap target (Apple HIG):
 }
 ```
 
+<!-- CONSTRAINT: TCH-09 — interactive-widget=resizes-content keyboard handling -->
 ### 5.3 Virtual Keyboard Handling
 
 The `interactive-widget=resizes-content` meta tag causes the visual viewport to shrink when the keyboard appears, pushing the input area above the keyboard without any JavaScript intervention.
@@ -1695,6 +1709,7 @@ function handleKeyboard(): void {
 
 **Scroll position preservation:** When the keyboard appears, `scrollIntoView({ block: 'end', behavior: 'instant' })` is called on the last message to prevent content from being hidden behind the input area. The `instant` behavior prevents visible scroll animation.
 
+<!-- CONSTRAINT: TCH-18 — PWA manifest for home-screen installation -->
 ### 5.4 PWA Considerations
 
 **`manifest.json`:**
@@ -1809,6 +1824,7 @@ function handleKeyboard(): void {
 
 ---
 
+<!-- CONSTRAINT: TCH-16 — Zustand for client state management -->
 ## 7. State Management
 
 ### 7.1 Client State Shape
@@ -1967,6 +1983,25 @@ interface PendingDiff {
 }
 ```
 
+#### Wire-to-UI Content Mapping: `TurnContent` → `ContentPart`
+
+The backend wire format (`TurnContent`, defined in Doc 06 §3) uses 8 variants. The frontend `ContentPart` above uses 11 variants. The mapping is not 1:1 — some wire types split into multiple UI parts, some are absorbed into other parts, and three UI parts have no wire equivalent.
+
+| Wire `TurnContent` (Doc 06) | Frontend `ContentPart` (Doc 07) | Mapping | Notes |
+|---|---|---|---|
+| `markdownContent` | `markdownContent`, `codeBlock` | 1 → 2 (split) | Fenced code blocks within markdown are extracted into separate `codeBlock` parts for Shiki highlighting. Prose remains as `markdownContent`. |
+| `thinking` | `thinking` | 1 → 1 (enriched) | Wire `content: string` → frontend adds `title`, `isActive`, nested `children`. Frontend tracks active state for shimmer animation. |
+| `toolInvocation` | `toolInvocation` | 1 → 1 | Wire `toolName` → frontend `name`. Wire `parameters` → frontend `args`. Wire `ToolCallState` (6 states) narrows to frontend `ToolState` (4 states). |
+| `textEdit` | `codeBlockPill`, `fileChanges` | 1 → 2 (split) | Each `textEdit` produces a `codeBlockPill` per file during streaming. On turn completion, all edits aggregate into a single `fileChanges` summary. |
+| `reference` | *(inlined in `markdownContent`)* | 1 → 0 (absorbed) | Rendered as markdown links within `markdownContent`. No dedicated frontend part type. |
+| `usage` | *(metadata only — `UsageInfo`)* | 1 → 0 (metadata) | Stored on `Message.usage`. Not rendered as a content part. Surfaces in message header or debug UI. |
+| `progressMessage` | `progress` | 1 → 1 (renamed) | Wire `message` → frontend `label`. Frontend adds `isActive` boolean for spinner control. |
+| `confirmation` | `permission` | 1 → 1 (renamed) | Wire `title`/`message` → frontend `toolName`/`description`. Frontend adds `command` and `id` for response correlation. |
+| *(no wire equivalent)* | `error` | 0 → 1 (frontend-only) | Generated from WebSocket errors, SDK errors, or failed tool invocations. |
+| *(no wire equivalent)* | `userInputRequest` | 0 → 1 (frontend-only) | Generated from SDK `event.user_input_request` WebSocket events (Doc 06 §6.1), not from turn content. |
+| *(no wire equivalent)* | `followUps` | 0 → 1 (frontend-only) | Extracted from `assistant.turn_complete` event's suggested follow-ups, or synthesized client-side. |
+
+<!-- CONSTRAINT: ARC-03 — WebSocket is the primary real-time channel -->
 ### 7.2 WebSocket Event → State Mapping
 
 > **Note:** The event names below are the *abstracted* event vocabulary consumed by the Zustand store, not raw server message types. The WebSocket hook translates the raw protocol defined in doc-06 Section 6.1 (e.g., `response.session.list`, `event.assistant.message_delta`, `event.tool.execution_start`) into these domain events. Connection-level events (`connection.*`) are generated locally by the hook.
@@ -2035,6 +2070,8 @@ The following table maps every raw wire event from Doc 06 Section 6.1 to the abs
 
 ---
 
+<!-- CONSTRAINT: ARC-02 — React is the shell, not the engine -->
+<!-- CONSTRAINT: TCH-01 — React must not control CodeMirror text state -->
 ## 8. Performance Architecture
 
 React serves as the layout shell; computationally intensive hot paths are delegated to purpose-built engines that own their own DOM or run off-thread.
@@ -2048,6 +2085,8 @@ React serves as the layout shell; computationally intensive hot paths are delega
 | **@tanstack/react-virtual** | Message list virtualization, file tree virtualization | Provides the windowing; React renders only visible items |
 | **Web Workers** | Diff computation, markdown parsing (remark/rehype), syntax highlighting (Shiki worker mode), file tree indexing | Off-main-thread to prevent jank during streaming |
 
+<!-- CONSTRAINT: TCH-03 — Ref-based streaming buffer, not per-token setState -->
+<!-- CONSTRAINT: TCH-22 — requestAnimationFrame as the streaming flush boundary -->
 ### Streaming Rendering Strategy
 
 1. Buffer incoming `assistant.message_delta` events in a React `ref` (not state).
@@ -2057,6 +2096,7 @@ React serves as the layout shell; computationally intensive hot paths are delega
 
 This decouples network event frequency from render frequency — delta events may arrive faster than frame rate without causing excess reconciliation.
 
+<!-- CONSTRAINT: TCH-02 — Virtualization mandatory (@tanstack/react-virtual) -->
 ### Virtualization Requirements
 
 **Message list:**
@@ -2069,6 +2109,7 @@ This decouples network event frequency from render frequency — delta events ma
 - Virtualized with @tanstack/react-virtual, collapsed by default.
 - Expand/collapse is a local state toggle that adjusts the virtual item list without remounting the tree.
 
+<!-- CONSTRAINT: TCH-20 — Degradation thresholds enforced automatically -->
 ### Degradation Thresholds
 
 | Condition | Threshold | Degraded Behavior | Detection |
