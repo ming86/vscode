@@ -1,5 +1,7 @@
 # 06 — Standalone Webapp Extraction Guide
 
+> Last updated: 2026-04-21
+
 A design document for building a **mobile-first** standalone web application (Node.js backend + browser frontend) that provides full **Copilot CLI** session management — creating, viewing, continuing, and streaming sessions — independent of VS Code. The primary viewport target is iPhone 16 Pro Max (440×956 CSS pixels, 3× retina); desktop is a supported secondary layout. The webapp runs on the same machine as the Copilot CLI and may optionally be exposed to the network via `cloudflared tunnel`.
 
 > **Scope:** This webapp connects to, resumes, and creates **Copilot CLI sessions only**. It does not integrate with GitHub cloud agents or the remote Copilot agent service. All session data is local to the machine running the Node.js process.
@@ -59,6 +61,7 @@ A single Node.js process hosts three concerns:
 
 ---
 
+<!-- ARC-01 -->
 ## 2. Architecture Overview
 
 ### System Diagram
@@ -142,7 +145,7 @@ The webapp does not fork or wrap VS Code source. VS Code's rendering layer depen
 
 **File naming convention:** Frontend component files mirror VS Code's content part renderer names 1:1. For example, `ChatMarkdownContentPart.tsx` corresponds to VS Code's `chatMarkdownContentPart.ts`. This makes upstream change tracking mechanical rather than archaeological.
 
-**Drift detection:** Maintain a `VS_CODE_ALIGNMENT.md` mapping file in the project root. This file records:
+**Drift detection:** Maintain a [`VS_CODE_ALIGNMENT.md`](./VS_CODE_ALIGNMENT.md) *(created during Phase 1 implementation)* mapping file in the project root. This file records:
 - Each copied constant/enum with its source path and last-synced VS Code commit SHA.
 - Each CSS token value with its origin in VS Code's theme definitions.
 - Each mirrored file name with its VS Code counterpart.
@@ -151,6 +154,7 @@ This mapping enables automated drift detection: a CI script can diff the declare
 
 ---
 
+<!-- ARC-02 -->
 ## 3. Backend Design
 
 ### 3.1 Technology Stack
@@ -161,7 +165,7 @@ This mapping enables automated drift detection: a CI script can diff the declare
 | WebSocket | `@hono/node-ws` ^1.3.0 | Bidirectional event relay (integrated with Hono) |
 | WebSocket (peer dep) | `ws` ^8.20.0 | Underlying WebSocket implementation required by `@hono/node-ws` |
 | SDK | `@github/copilot` ^1.0.24 | Session management, model inference |
-| MCP | `@modelcontextprotocol/sdk` ^1.29.0 + `@hono/mcp` ^0.2.0 | Tool hosting via Hono MCP integration |
+| MCP | `@modelcontextprotocol/sdk` ^1.29.0 + `@hono/mcp` ^0.2.5 | Tool hosting via Hono MCP integration |
 | UUID | `crypto.randomUUID()` | Nonce generation, session IDs |
 | JWT auth | `jsonwebtoken` ^9.0.0 | Token verification for tunnel-mode authentication |
 | SQLite | `better-sqlite3` ^12.8.0 | Optional file-edit persistence |
@@ -448,9 +452,9 @@ The `@github/copilot` SDK expects an MCP endpoint for tool invocations. In VS Co
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpHandler } from '@hono/mcp';
 import { mkdirSync, unlinkSync, existsSync, chmodSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { dirname } from 'node:path';
 
 interface McpConfig {
   readonly socketPath: string;
@@ -485,26 +489,8 @@ function createMcpToolHost(config: McpConfig): { start: () => void; stop: () => 
 
   registerTools(mcpServer, config);
 
-  // ── Transport binding ───────────────────────────────────
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() });
-  mcpServer.connect(transport);
-
-  // Bind transport routes via Hono
-  app.post('/mcp', async (c) => {
-    const req = c.req.raw;
-    const res = await transport.handleRequest(req);
-    return res;
-  });
-  app.get('/mcp', async (c) => {
-    const req = c.req.raw;
-    const res = await transport.handleRequest(req);
-    return res;
-  });
-  app.delete('/mcp', async (c) => {
-    const req = c.req.raw;
-    const res = await transport.handleRequest(req);
-    return res;
-  });
+  // ── Route binding via @hono/mcp middleware ──────────────
+  app.all('/mcp', createMcpHandler(mcpServer));
 
   // ── Unix socket lifecycle ───────────────────────────────
   const socketDir = dirname(config.socketPath);
@@ -794,8 +780,8 @@ function writeLockFile(config: {
 The SDK manages `~/.copilot/session-state/{sessionId}/events.jsonl` automatically. Each line is a JSON object:
 
 ```jsonc
-{"type":"assistant.message_delta","data":{"content":"Hello"},"id":"evt_001","timestamp":"2025-06-21T12:00:00.000Z","parentId":null}
-{"type":"assistant.message","data":{"content":"Hello, how can I help?"},"id":"evt_002","timestamp":"2025-06-21T12:00:01.000Z","parentId":"evt_001"}
+{"type":"assistant.message_delta","data":{"content":"Hello"},"id":"evt_001","timestamp":"2026-06-21T12:00:00.000Z","parentId":null}
+{"type":"assistant.message","data":{"content":"Hello, how can I help?"},"id":"evt_002","timestamp":"2026-06-21T12:00:01.000Z","parentId":"evt_001"}
 ```
 
 The webapp should **not** write to `events.jsonl` directly — the SDK handles persistence. For listing sessions, scan the directory:
@@ -934,6 +920,7 @@ The WebSocket connection at `/ws` uses a JSON-based message protocol. See [Secti
 
 ---
 
+<!-- MOB-01 PERF-01 -->
 ## 4. Frontend Design
 
 ### 4.1 Technology Stack
@@ -1379,6 +1366,7 @@ function DiffView({ original, modified, filePath, onRespond }: DiffViewProps) {
 
 ---
 
+<!-- SEC-01 -->
 ## 5. Security Design
 
 ### 5.1 Local Mode (No Tunnel)
@@ -1495,6 +1483,7 @@ function authMiddleware(config: AuthConfig) {
 
 ---
 
+<!-- PERF-02 DAT-01 -->
 ## 6. Communication Protocol
 
 ### 6.1 WebSocket Message Types
@@ -2113,6 +2102,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 
 ---
 
+<!-- ARC-03 -->
 ## 10. Dependencies
 
 ### Frontend npm Packages
@@ -2145,16 +2135,16 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "@radix-ui/react-toggle": "^1.1.0",
     "@radix-ui/react-visually-hidden": "^1.1.0",
     "@tanstack/react-virtual": "^3.13.0",
-    "vaul": "^1.1.0",
+    "vaul": "^1.1.2",
     "cmdk": "^1.1.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.0",
     "rehype-raw": "^7.0.0",
-    "shiki": "^4.0.0",
+    "shiki": "^4.0.2",
     "lucide-react": "^1.8.0",
     "clsx": "^2.1.0",
     "tailwind-merge": "^3.5.0",
-    "zustand": "^5.0.0"
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "vite": "^8.0.0",
@@ -2182,7 +2172,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "hono":                          "^4.12.0",
     "@hono/node-server":             "^1.19.0",
     "@hono/node-ws":                 "^1.3.0",
-    "@hono/mcp":                     "^0.2.0",
+    "@hono/mcp":                     "^0.2.5",
     "ws":                            "^8.20.0",
     "jsonwebtoken":                  "^9.0.0",
     "better-sqlite3":                "^12.8.0",
@@ -2206,11 +2196,11 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 | Requirement | Minimum | Recommended |
 |-------------|---------|-------------|
 | **Node.js** | 24.x LTS | 24.x LTS (latest point release) |
-| **OS** | macOS 13+, Ubuntu 22.04+, Windows 11 (WSL2) | macOS 14+ (native Unix socket support) |
+| **OS** | macOS 14+, Ubuntu 22.04+, Windows 11 (WSL2) | macOS 14+ (native Unix socket support) |
 | **RAM** | 512 MB (backend only) | 1 GB (with frontend build) |
 | **Disk** | 100 MB (node_modules) + session data | 500 MB |
 | **GitHub** | Active Copilot subscription | Copilot Business/Enterprise (for extended features) |
-| **cloudflared** | v2024.1+ (tunnel mode only) | Latest stable |
+| **cloudflared** | v2026.1+ (tunnel mode only) | Latest stable |
 
 ### Project Structure
 

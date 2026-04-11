@@ -2,9 +2,11 @@
 
 > **Status:** Authoritative reference — consolidates all constraints, requirements, and architectural decisions.
 > **Sources:** [03-protocol.md](03-protocol.md), [06-webapp-extraction-guide.md](06-webapp-extraction-guide.md), [07-ui-specification.md](07-ui-specification.md), plus in-session architectural decisions.
-> **Last updated:** 2025-07-17
+> **Last updated:** 2026-04-21
 
 This document defines what the Copilot CLI Session webapp **must do**, **cannot do**, and **why**. It is the single canonical source for project constraints. When in doubt, this document governs.
+
+> **Cross-reference:** For complete system requirements including Node.js, OS versions, and tooling, see [06-webapp-extraction-guide.md](./06-webapp-extraction-guide.md#system-requirements).
 
 ### How to Use This Document
 

@@ -1,5 +1,7 @@
 # UI Specification
 
+> Last updated: 2026-04-21
+
 Visual and interaction blueprint for the Copilot CLI Session webapp. A frontend developer should be able to build the entire UI from this document alone.
 
 **Scope:** Copilot CLI session management — connect, resume, create, view sessions. No cloud agents, no GitHub remote copilot.
@@ -421,7 +423,7 @@ Session drawer (Vaul) slides up from bottom when `☰` is tapped:
 
 Single-column layout with a toggleable sidebar overlay:
 - Session list hidden by default, accessible via hamburger menu
-- Sidebar slides in as a 320px overlay from the left
+- Sidebar slides in as a 320px overlay from the left (320px chosen to remain under half the minimum tablet width of 640px, keeping the chat area majority-visible and avoiding a full-screen takeover)
 - Chat area takes full width when sidebar is hidden
 - Same component rendering as desktop, narrower containers
 
@@ -1983,9 +1985,7 @@ The following table maps every raw wire event from Doc 06 Section 6.1 to the abs
 | `event.assistant.message_delta` | `message.response.part.update` | Streaming markdown append |
 | `event.assistant.message` | `message.response.complete` | Full turn content, ends stream |
 | `event.tool.execution_start` | `message.response.part` | New toolInvocation content part added |
-| `event.tool.execution_complete` | `message.response.part.update` | Tool state transitions to complete |
-
-> **Discriminator note:** Both `event.assistant.message_delta` and `event.tool.execution_complete` map to `message.response.part.update`. Discriminate by `partIndex` and `part.type` to route updates to the correct content part renderer.
+| `event.tool.execution_complete` | `message.response.part.update` | Tool state transitions to complete. **Discriminator:** Both `event.assistant.message_delta` and `event.tool.execution_complete` map to `message.response.part.update`; discriminate by `partIndex` and `part.type` to route updates to the correct content part renderer. |
 | `event.session.title_changed` | `session.title_changed` | Auto-generated or renamed title |
 | `event.session.error` | `session.error` | SDK or API failure |
 | `event.assistant.usage` | `usage.update` | Token counts for the response |
