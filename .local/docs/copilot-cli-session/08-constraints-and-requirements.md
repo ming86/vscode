@@ -42,6 +42,9 @@ This document defines what the Copilot CLI Session webapp **must do**, **cannot 
 8. [Technical Constraints](#8-technical-constraints)
 9. [Operational Constraints](#9-operational-constraints)
 10. [Severity Classification](#10-severity-classification)
+- [Appendix A: Constraint-to-Phase Mapping](#appendix-a-constraint-to-phase-mapping)
+- [Appendix B: Constraint Cross-Reference](#appendix-b-constraint-cross-reference)
+- [Appendix C: Decision Log](#appendix-c-decision-log)
 
 ---
 
@@ -244,7 +247,7 @@ sequenceDiagram
     participant User
     participant FE as Frontend
     participant API as REST API
-    participant SDK as LocalSessionManager
+    participant SDK as CopilotClient
 
     User->>FE: Open session
     FE->>API: GET /api/sessions/:id?limit=50
@@ -359,7 +362,7 @@ interface SessionProvider {
 
 | Decision | Rationale |
 |----------|-----------|
-| Current implementation | Single `CopilotCLIProvider` backed by `LocalSessionManager` from `@github/copilot` SDK |
+| Current implementation | Single `CopilotCLIProvider` backed by `CopilotClient` / `CopilotSession` from `@github/copilot-sdk` |
 | Future extensibility | Interface supports additional providers (cloud agents, other AI services) without refactoring consumers |
 | Scope guard | Keep it minimal. No provider registry, no dynamic loading, no plugin system. Add complexity only when a second provider materializes. |
 
@@ -449,7 +452,7 @@ graph TB
     subgraph NodeProcess["Node.js Process (single)"]
         HTTP["Hono HTTP<br/>─────────────────<br/>Static files (SPA)<br/>REST API routes"]
         WSS["WebSocket Server<br/>─────────────────<br/>ws library on /ws<br/>Event relay, subscriptions"]
-        SDKI["SDK Integration<br/>─────────────────<br/>LocalSessionManager<br/>Session lifecycle<br/>Event dispatch"]
+        SDKI["SDK Integration<br/>─────────────────<br/>CopilotClient / CopilotSession<br/>Session lifecycle<br/>Event dispatch"]
         MCPS["MCP Tool Host<br/>─────────────────<br/>Hono on Unix socket<br/>6 tools + push notifications"]
         AUTH["Auth Middleware<br/>─────────────────<br/>Nonce (local) or<br/>JWT/CF Access (tunnel)"]
         MUTEX["Session Mutex<br/>─────────────────<br/>Per-session lock<br/>Serializes send() calls"]
@@ -483,14 +486,14 @@ graph TB
 
 ## 4. SDK/Platform Constraints
 
-Constraints imposed by the `@github/copilot` SDK, the Copilot API, and the platform runtime.
+Constraints imposed by the `@github/copilot-sdk` (which depends on `@github/copilot` internally), the Copilot API, and the platform runtime.
 
 > **Note:** Within each category below, constraints are ordered by severity (see §10): Hard Blockers first, then Functional Degradation, Quality/Compliance, and Standard.
 
 | ID | Constraint | Rationale | Impact |
 |----|-----------|-----------|--------|
-| SDK-01 | **`LocalSessionManager` is the sole SDK entry point.** All session lifecycle operations (create, load, send, abort, close) go through this class. | The SDK does not expose lower-level primitives. `LocalSessionManager` encapsulates authentication, model routing, and event dispatch. | Backend must instantiate exactly one `LocalSessionManager` and route all session operations through it. |
-| SDK-02 | **MCP server is mandatory.** The SDK expects an MCP endpoint for tool invocations. Without it, the agent cannot execute tools. | VS Code's extension host provides this; the webapp must replicate it. | Backend must run an MCP server on a Unix socket, registered at `LocalSessionManager` creation time. |
+| SDK-01 | **`CopilotClient` / `CopilotSession` is the sole SDK entry point.** All session lifecycle operations (create, load, send, abort, close) go through these classes. Tools are registered via `defineTool()` with `zod` parameter schemas. | The SDK does not expose lower-level primitives. `CopilotClient` encapsulates authentication, model routing, and event dispatch; `CopilotSession` wraps individual conversations. | Backend must instantiate exactly one `CopilotClient` and route all session operations through it. |
+| SDK-02 | **MCP server is mandatory.** The SDK expects an MCP endpoint for tool invocations. Without it, the agent cannot execute tools. | VS Code's extension host provides this; the webapp must replicate it. | Backend must run an MCP server on a Unix socket, registered at `CopilotClient` creation time. |
 | SDK-03 | **`events.jsonl` is the SDK's persistence format.** The SDK reads and writes `~/.copilot/session-state/{sessionId}/events.jsonl`. The webapp must not write to this file directly. | The SDK manages serialization, event ordering, and replay. External writes corrupt the event log. | Session persistence is read-only for the webapp. Use optional SQLite for webapp-specific state (file edits, UI metadata). |
 | SDK-06 | **SDK is not thread-safe for concurrent `send()` calls.** Multiple simultaneous `send()` invocations on the same session corrupt state. | Single-threaded design assumption in the SDK. | Backend must implement a per-session mutex. Serialize all `send()` calls. |
 | SDK-07 | **Lock file protocol governs session ownership.** Lock files in `~/.copilot/ide/` declare which host owns which session. Format includes `socketPath`, `pid`, `ideName`, `workspaceFolders`. | Enables discovery and handoff between VS Code, CLI, and the webapp. | Webapp must write its own lock file on startup (`ideName: 'copilot-webapp'`). Must read and respect other hosts' lock files. Display warnings for sessions owned by another host. |
@@ -528,7 +531,7 @@ Boundaries on what the webapp does and does not include.
 
 | ID | Constraint | Rationale | Impact |
 |----|-----------|-----------|--------|
-| SCP-01 | **Copilot CLI sessions only.** No cloud agent sessions. No remote copilot integration. No arbitrary AI provider support. | The webapp replaces VS Code as a host for `@github/copilot` SDK sessions — nothing more. Cloud agents and remote copilot have distinct protocols and authentication flows. | The provider interface exists for future extensibility, but v1 implements only `CopilotCLIProvider`. |
+| SCP-01 | **Copilot CLI sessions only.** No cloud agent sessions. No remote copilot integration. No arbitrary AI provider support. | The webapp replaces VS Code as a host for `@github/copilot-sdk` sessions — nothing more. Cloud agents and remote copilot have distinct protocols and authentication flows. | The provider interface exists for future extensibility, but v1 implements only `CopilotCLIProvider`. |
 | SCP-02 | **Local filesystem only.** The webapp reads/writes the local machine's filesystem. No remote filesystem abstraction. No VS Code file service equivalent. | Operational simplicity. The webapp runs on the same machine as the project. Remote filesystem support adds an entire layer of complexity (latency, caching, conflict resolution) that is not justified for the use case. | `node:fs` is used directly. No `IFileService` abstraction. Tools like `read_file` and `write_file` operate on local paths. |
 | SCP-03 | **Two themes only.** Dark Modern and Light Modern, matching VS Code's defaults. No arbitrary theme support. | Shiki, CodeMirror 6, and the CSS token system all need consistent theme data. Supporting arbitrary themes requires a theme compilation pipeline. Two themes are sufficient for the use case. | Theme toggle: dark / light / system. CSS custom properties map to VS Code's Dark Modern and Light Modern token values. |
 | SCP-04 | **No language server protocol.** The webapp does not run LSP servers for diagnostics, completions, or hover information. | LSP requires per-language server processes, workspace indexing, and significant memory. The webapp is lightweight by design. | Code editing is degraded compared to VS Code: no IntelliSense, no real-time diagnostics, no go-to-definition. Linting is available only via external tool invocation (tsc, eslint) through MCP tools. |
@@ -539,7 +542,7 @@ Boundaries on what the webapp does and does not include.
 
 ## 7. Security Constraints
 
-Authentication, authorization, transport security, and sandboxing requirements.
+Authentication, authorization, transport security, and sandboxing requirements. For tunnel-mode implementation details (JWT middleware, Cloudflare Access integration, tunnel setup), see [09-deployment.md](./09-deployment.md).
 
 | ID | Constraint | Rationale | Impact |
 |----|-----------|-----------|--------|
@@ -619,7 +622,7 @@ Violation of any of these prevents the application from functioning correctly. N
 
 | ID | Summary | Failure Mode if Violated |
 |----|---------|-------------------------|
-| SDK-01 | `LocalSessionManager` as sole entry point | Cannot create or manage sessions |
+| SDK-01 | `CopilotClient` / `CopilotSession` as sole entry point | Cannot create or manage sessions |
 | SDK-02 | MCP server mandatory for tool invocations | Agent cannot execute tools — sessions are read-only |
 | SDK-03 | `events.jsonl` read-only for webapp | Event log corruption, session data loss |
 | SDK-06 | Per-session mutex for `send()` serialization | Race conditions, corrupted session state |
@@ -684,7 +687,7 @@ Must satisfy before any frontend work begins.
 
 | Constraint | Why This Phase |
 |-----------|---------------|
-| SDK-01 | `LocalSessionManager` setup is the first line of backend code |
+| SDK-01 | `CopilotClient` setup is the first line of backend code |
 | SDK-02 | MCP server must exist for tool invocations |
 | SDK-03 | Establishes read-only discipline from day one |
 | SDK-06 | Session mutex must be in place before any message handling |
@@ -752,7 +755,7 @@ Must satisfy for interactive tool use.
 
 ### Phase 5 — Remote Access
 
-Must satisfy for tunnel mode.
+Must satisfy for tunnel mode. See [09-deployment.md](./09-deployment.md) for implementation details.
 
 | Constraint | Why This Phase |
 |-----------|---------------|
@@ -795,7 +798,7 @@ Quick lookup — which document section defines each constraint.
 | Category | IDs | Count | Source |
 |----------|-----|-------|--------|
 | SDK/Platform | SDK-01 through SDK-12 | 12 | Doc 06 §§2–3, §9 |
-| Architecture | ARC-01 through ARC-10 | 9 | Doc 06 §§2, 4; Doc 07 §§2, 7 |
+| Architecture | ARC-01 through ARC-10 (excluding ARC-07) | 9 | Doc 06 §§2, 4; Doc 07 §§2, 7 |
 | Scope | SCP-01 through SCP-06 | 6 | Doc 06 §§1, 8 |
 | Security | SEC-01 through SEC-12 (excluding SEC-07) | 11 | Doc 06 §5 |
 | Technical | TCH-01 through TCH-22 | 22 | Doc 06 §§4, 9; Doc 07 §§3–7 |

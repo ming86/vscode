@@ -943,7 +943,7 @@ class SessionManager {
   rename(sessionId: string, newTitle: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
-      session.wrapper.send({ prompt: '', agentMode: false }); // no-op; title update is separate
+      // Title update is handled separately via session metadata, not via send()
       // Directly update the session metadata
     }
   }
@@ -1403,7 +1403,7 @@ The file system watcher detects when external CLI processes create, update, or r
 import { watch, FSWatcher } from 'chokidar'; // or equivalent
 
 const SESSION_STATE_GLOB = path.join(os.homedir(), '.copilot', 'session-state', '**', '*.jsonl');
-const THROTTLE_MS = 200; // VS Code uses 100-200ms debounce for state manager updates
+const THROTTLE_MS = 500; // VS Code uses 500ms ThrottledDelayer for file watcher events
 
 class SessionFileWatcher {
   private watcher: FSWatcher;
@@ -1751,7 +1751,7 @@ const content = await agentHostClient.resourceRead('content://session/abc123/tur
 **Problem:** Rapid writes to `events.jsonl` during an active CLI session produce dozens of change events per second, causing UI thrashing.
 
 **Mitigation:**
-- Throttle change events with a 100-200ms window. Only the last event in a window fires the refresh. VS Code uses a `RunOnceScheduler` with a 100ms delay for state manager summary notifications.
+- Throttle change events with a 200–500ms window. Only the last event in a window fires the refresh. VS Code uses a 500ms `ThrottledDelayer` for file watcher events and a separate `RunOnceScheduler` for summary notification batching.
 - Use `awaitWriteFinish` (if available in your file watcher library) to delay until the file is stable.
 
 ### 7. Content Size Management

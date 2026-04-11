@@ -220,7 +220,7 @@ These are broadcast to all connected MCP transports via `broadcastNotification()
 
 JSON-RPC 2.0 over `MessagePort` (desktop) or WebSocket (remote/web).
 
-This is a third communication axis — distinct from both Channel A and Channel B — responsible for synchronizing session state between the extension host (server-authoritative) and the webview/UI layer (client).
+This is a third communication axis — distinct from both Channel A and Channel B — responsible for synchronizing session state between the agent host (server-authoritative) and the webview/UI layer (client).
 
 ### State Synchronization Model
 
@@ -229,7 +229,7 @@ The server maintains an immutable state tree. Clients never mutate state directl
 ```mermaid
 sequenceDiagram
     participant Client as UI Client (Webview)
-    participant Server as Agent Host (Extension)
+    participant Server as Agent Host (Utility Process)
 
     Client->>Server: subscribe(uri)
     Server-->>Client: Full ISessionState snapshot
@@ -245,7 +245,7 @@ sequenceDiagram
 
 **Key properties:**
 
-- **Server-authoritative:** The extension host is the single source of truth for all session state.
+- **Server-authoritative:** The agent host is the single source of truth for all session state.
 - **Subscription-based:** Clients subscribe by URI (`subscribe(uri)` / `unsubscribe(uri)`). A full `ISessionState` snapshot is delivered on subscribe.
 - **Incremental updates:** After the initial snapshot, changes arrive as `ActionEnvelope` objects:
   ```typescript

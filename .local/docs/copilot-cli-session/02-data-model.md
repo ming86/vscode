@@ -126,7 +126,7 @@ export interface ISessionSummary {
     resource: URI;
     provider: string;
     title: string;
-    status: SessionStatus;      // Bitset: Idle=1, Error=2, InProgress=8, InputNeeded=24
+    status: number;              // Bitset: Idle=1, Error=2, InProgress=8, InputNeeded=24
     createdAt: number;
     modifiedAt: number;
     model?: string;

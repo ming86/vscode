@@ -56,7 +56,7 @@ A single Node.js process hosts three concerns:
 | Concern | Responsibility |
 |---------|---------------|
 | **HTTP/WS Server** | Serves the frontend SPA, exposes REST endpoints, manages WebSocket connections |
-| **SDK Integration** | Drives `@github/copilot` SDK via `LocalSessionManager`, relays events |
+| **SDK Integration** | Drives `@github/copilot-sdk` via `CopilotClient`, relays events |
 | **MCP Tool Host** | Runs an MCP server (Hono on Unix socket) that the SDK connects to for tool invocations |
 
 ---
@@ -75,9 +75,9 @@ graph TB
     subgraph NodeProcess["Node.js Process"]
         WS["WebSocket Server<br/>─────────────────<br/>ws library on /ws<br/>Event relay, bidirectional RPC"]
         REST["REST API<br/>─────────────────<br/>Hono on :3000<br/>Session CRUD, static files"]
-        SDK["SDK Integration<br/>─────────────────<br/>LocalSessionManager<br/>Session lifecycle, event dispatch"]
+        SDK["SDK Integration<br/>─────────────────<br/>CopilotClient<br/>Session lifecycle, event dispatch"]
         MCP["MCP Tool Host<br/>─────────────────<br/>Hono on Unix socket<br/>6 tools + push notifications"]
-        AUTH["Auth Middleware<br/>─────────────────<br/>Nonce (local) or<br/>Bearer token (tunnel)"]
+        AUTH["Auth Middleware<br/>─────────────────<br/>Nonce auth (local)<br/>See doc 09 for tunnel"]
     end
 
     subgraph Filesystem["Filesystem (~/.copilot/)"]
@@ -115,7 +115,7 @@ graph LR
         A --> C["Static File Server (SPA)"]
         A --> D["REST API Routes"]
         B --> E["Session Event Relay"]
-        E --> F["LocalSessionManager"]
+        E --> F["CopilotClient"]
         F --> G["MCP Client (SDK-internal)"]
         G --> H["MCP Server (Unix socket, same process)"]
     end
@@ -127,7 +127,7 @@ The webapp collapses VS Code's four-layer architecture into two layers:
 
 | VS Code Layer | Webapp Equivalent |
 |---------------|-------------------|
-| **Extension Layer** — SDK bridge in extension host; **Sessions Layer** — `CopilotChatSessionsProvider` | **SDK Integration** — direct `LocalSessionManager` usage in the main process |
+| **Extension Layer** — SDK bridge in extension host; **Sessions Layer** — `CopilotChatSessionsProvider` | **SDK Integration** — direct `CopilotClient` usage in the main process |
 | **Sessions Layer** — `ISessionsManagementService`, `ISessionsProvidersService` | **REST/WS API** — HTTP endpoints and WebSocket relay replace service injection |
 | **Workbench Layer** — chat widget, diff editor, approval dialogs | **Frontend SPA** — React 19 + shadcn/ui AI + Radix + Vaul reimplementing the UI (mobile-first) |
 | **Platform Layer** — file service, configuration, telemetry | **Node.js stdlib** — `fs`, `path`, `os` directly; no abstraction needed |
@@ -164,66 +164,54 @@ This mapping enables automated drift detection: a CI script can diff the declare
 | HTTP server | `hono` ^4.12.0 + `@hono/node-server` ^1.19.0 | REST endpoints, static file serving, MCP host |
 | WebSocket | `@hono/node-ws` ^1.3.0 | Bidirectional event relay (integrated with Hono) |
 | WebSocket (peer dep) | `ws` ^8.20.0 | Underlying WebSocket implementation required by `@hono/node-ws` |
-| SDK | `@github/copilot` ^1.0.24 | Session management, model inference |
+| SDK | `@github/copilot-sdk` ^0.2.2 | Copilot SDK for session management (depends on `@github/copilot` CLI binary internally) |
+| Schema validation | `zod` ^3.25.0 | Parameter schemas for `defineTool()` |
 | MCP | `@modelcontextprotocol/sdk` ^1.29.0 + `@hono/mcp` ^0.2.5 | Tool hosting via Hono MCP integration |
 | UUID | `crypto.randomUUID()` | Nonce generation, session IDs |
-| JWT auth | `jsonwebtoken` ^9.0.0 | Token verification for tunnel-mode authentication |
 | SQLite | `better-sqlite3` ^12.8.0 | Optional file-edit persistence |
 | Markdown | `marked` ^18.0.0 | Server-side markdown→HTML for REST responses (optional) |
 | TypeScript execution | `tsx` ^4.21.0 (dev) | Development: watch mode with full syntax support including enums |
 
 > **TypeScript execution strategy:** In development, `tsx` provides watch mode and full TypeScript support (including enums and decorators) without a compilation step. For production, compile via `tsc` to JavaScript then run with `node`. Type checking is a separate concern: run `tsc --noEmit` independently — it does not participate in the execution pipeline. Environment variables are loaded via Node's native `--env-file=.env` flag; no `dotenv` dependency is required.
 
+> **SDK architecture note:** `@github/copilot-sdk` is the public standalone SDK. It depends on `@github/copilot` internally (the full CLI binary, ~129 MB, is still pulled in as a transitive dependency — no need to list both in `package.json`). The SDK communicates with the CLI process via JSON-RPC over stdio, not in-process like VS Code's extension host. This is the recommended approach for standalone applications outside VS Code.
+
 ### 3.2 SDK Integration Layer
 
-#### LocalSessionManager Setup
+#### CopilotClient Setup
 
 ```typescript
-import { LocalSessionManager } from '@github/copilot/sdk';
+import { CopilotClient, defineTool } from '@github/copilot-sdk';
 import type {
-  Session,
-  SessionCreateOptions,
+  CopilotSession,
+  SessionConfig,
   SessionEvent,
-} from '@github/copilot/sdk';
+  PermissionRequestResult,
+} from '@github/copilot-sdk';
+import { z } from 'zod';
 
-interface SessionManagerConfig {
+interface CopilotClientConfig {
   readonly clientName: string;
-  readonly mcpSocketPath: string;
-  readonly mcpNonce: string;
   readonly defaultModel: string;
   readonly workingDirectory: string;
 }
 
-function createSessionManager(config: SessionManagerConfig): LocalSessionManager {
-  const manager = new LocalSessionManager({
-    clientName: config.clientName,
-    mcpServers: [
-      {
-        name: 'webapp-tools',
-        transport: {
-          type: 'http',
-          url: `http+unix://${encodeURIComponent(config.mcpSocketPath)}/mcp`,
-          headers: {
-            Authorization: `Nonce ${config.mcpNonce}`,
-          },
-        },
-      },
-    ],
-  });
-
-  return manager;
+async function createClient(config: CopilotClientConfig): Promise<CopilotClient> {
+  const client = new CopilotClient();
+  await client.start();
+  return client;
 }
 ```
 
 #### Provider Interface
 
-The SDK integration is accessed through a lightweight provider interface. The current implementation has a single concrete provider (Copilot SDK via `LocalSessionManager`), but the interface boundary enables future extensibility without a full registry pattern.
+The SDK integration is accessed through a lightweight provider interface. The current implementation has a single concrete provider (`@github/copilot-sdk` via `CopilotClient`), but the interface boundary enables future extensibility without a full registry pattern.
 
 ```typescript
 interface SessionProvider {
   name: string;
-  createSession(options: CreateSessionOptions): Promise<Session>;
-  loadSession(sessionId: string): Promise<Session>;
+  createSession(options: CreateSessionOptions): Promise<CopilotSession>;
+  loadSession(sessionId: string): Promise<CopilotSession>;
   listSessions(): Promise<SessionSummary[]>;
 }
 
@@ -243,94 +231,93 @@ interface SessionSummary {
 
 > **Note:** This shows the minimal session lifecycle methods. The full provider contract including `sendMessage()`, `abort()`, and event subscription is defined in [08-constraints-and-requirements.md](./08-constraints-and-requirements.md) §3.2.
 
-The webapp instantiates a single `CopilotCLIProvider` that wraps `LocalSessionManager`. All backend route handlers interact with this interface rather than the SDK types directly, keeping the coupling surface narrow.
+The webapp instantiates a single `CopilotCLIProvider` that wraps `CopilotClient`. All backend route handlers interact with this interface rather than the SDK types directly, keeping the coupling surface narrow.
 
 #### Session CRUD Operations
 
 ```typescript
 // ── Session registry ─────────────────────────────────────────────
-// Maps sessionId → active Session instance.
+// Maps sessionId → active CopilotSession instance.
 // The SDK owns persistence; this map tracks in-memory handles only.
-const activeSessions = new Map<string, Session>();
+const activeSessions = new Map<string, CopilotSession>();
 
 // ── Create ───────────────────────────────────────────────────────
 async function createSession(
-  manager: LocalSessionManager,
+  client: CopilotClient,
   opts: {
     workingDirectory: string;
     model?: string;
-    agentMode?: 'interactive' | 'autopilot' | 'plan';
+    mode?: 'interactive' | 'autopilot' | 'plan';
   },
-): Promise<Session> {
-  const session = await manager.createSession({
+): Promise<CopilotSession> {
+  const session = await client.createSession({
     clientName: 'copilot-webapp',
     workingDirectory: opts.workingDirectory,
     model: opts.model ?? 'claude-sonnet-4',
-    enableStreaming: true,
-    sessionCapabilities: new Set([
-      'plan-mode',
-      'ask-user',
-      'interactive-mode',
-      'memory',
-      'cli-documentation',
-      'system-notifications',
-    ]),
+    streaming: true,
+    tools: webappTools,  // defined via defineTool() — see §3.3
+    // Capabilities (plan-mode, ask-user, etc.) are negotiated server-side
+    // based on the client's declared callbacks — no explicit capability set.
+    onPermissionRequest: handlePermissionRequest,
+    onUserInputRequest: handleUserInputRequest,
   });
 
-  activeSessions.set(session.id, session);
+  activeSessions.set(session.sessionId, session);
   wireSessionEvents(session);
   return session;
 }
 
 // ── Load (restore from disk) ─────────────────────────────────────
 async function loadSession(
-  manager: LocalSessionManager,
+  client: CopilotClient,
   sessionId: string,
-): Promise<Session> {
+): Promise<CopilotSession> {
   if (activeSessions.has(sessionId)) {
     return activeSessions.get(sessionId)!;
   }
 
-  const session = await manager.getSession(
-    { clientName: 'copilot-webapp', sessionId },
-    true, // autoRestore — replays events.jsonl into memory
-  );
+  const session = await client.resumeSession(sessionId, {
+    clientName: 'copilot-webapp',
+    tools: webappTools,
+    onPermissionRequest: handlePermissionRequest,
+    onUserInputRequest: handleUserInputRequest,
+  });
 
-  activeSessions.set(session.id, session);
+  activeSessions.set(session.sessionId, session);
   wireSessionEvents(session);
   return session;
 }
 
 // ── Send message ─────────────────────────────────────────────────
 async function sendMessage(
-  session: Session,
+  session: CopilotSession,
   prompt: string,
-  agentMode: 'interactive' | 'autopilot' | 'plan' = 'interactive',
+  mode: 'interactive' | 'autopilot' | 'plan' = 'interactive',
   attachments?: Array<{ type: string; content: string }>,
 ): Promise<void> {
+  // Mode is set via a separate RPC call, not passed to session.send()
+  await session.rpc.mode.set({ mode });
   await session.send({
     prompt,
-    agentMode,
     attachments: attachments ?? [],
   });
 }
 
 // ── Abort ────────────────────────────────────────────────────────
-function abortSession(session: Session): void {
-  session.abort();
+async function abortSession(session: CopilotSession): Promise<void> {
+  await session.abort();
 }
 
 // ── Close & cleanup ──────────────────────────────────────────────
 async function closeSession(
-  manager: LocalSessionManager,
+  client: CopilotClient,
   sessionId: string,
 ): Promise<void> {
   const session = activeSessions.get(sessionId);
   if (session) {
-    session.abort();
+    await session.disconnect();
     activeSessions.delete(sessionId);
   }
-  await manager.closeSession(sessionId);
 }
 ```
 
@@ -346,10 +333,10 @@ type WebSocketClient = {
 
 const clients = new Set<WebSocketClient>();
 
-function wireSessionEvents(session: Session): void {
-  // Only generic relay events belong here. Approval events (permission.requested,
-  // exit_plan_mode.requested, user_input.requested) are handled by dedicated
-  // handlers below that format them as approval.* messages — see Section 6.
+function wireSessionEvents(session: CopilotSession): void {
+  // Only generic relay events belong here. Approval events (permissions,
+  // user input) are handled via onPermissionRequest / onUserInputRequest
+  // callbacks in SessionConfig — see "Permission and Approval Handling" below.
   const events = [
     'assistant.message_delta',
     'assistant.message',
@@ -364,14 +351,14 @@ function wireSessionEvents(session: Session): void {
     session.on(eventName, (data: unknown) => {
       const payload = JSON.stringify({
         type: `event.${eventName}`,
-        sessionId: session.id,
+        sessionId: session.sessionId,
         data,
         timestamp: Date.now(),
       });
 
       for (const client of clients) {
         if (
-          client.subscribedSessions.has(session.id) &&
+          client.subscribedSessions.has(session.sessionId) &&
           client.ws.readyState === WebSocket.OPEN
         ) {
           client.ws.send(payload);
@@ -384,67 +371,58 @@ function wireSessionEvents(session: Session): void {
 
 #### Permission and Approval Handling
 
-The SDK emits `permission.requested`, `exit_plan_mode.requested`, and `user_input.requested` events. These are blocking — the agent pauses until a response is provided. The webapp must relay these to the frontend and return the user's decision.
+The SDK uses a **callback-based pattern** for permissions and user input. The `onPermissionRequest` and `onUserInputRequest` callbacks are passed to `createSession` / `resumeSession` via `SessionConfig`. Each callback returns a `Promise` that resolves when the user responds via the frontend — a deferred-promise pattern.
 
 ```typescript
-// The SDK provides the event data and a separate method on the session
-// to respond. The session's `respondToPermission` method must be called
-// with the requestId from the event to unblock the agent.
-
-session.on('permission.requested', (event) => {
-  // event.data.permissionRequest — contains tool details
-  // event.data.requestId — correlation ID for the response
-  //
-  // Use session.respondToPermission(requestId, response) to unblock.
-
-  const requestId = event.data.requestId;
-  const permissionRequest = event.data.permissionRequest;
-
-  pendingApprovals.set(requestId, (approved: boolean) => {
-    session.respondToPermission(requestId, approved ? 'allow' : 'deny');
-  });
-
-  broadcast(session.id, {
-    type: 'approval.permission_requested',
-    sessionId: session.id,
-    requestId,
-    toolName: permissionRequest.toolName ?? permissionRequest.toolCallId,
-    parameters: permissionRequest,
-  });
-});
-
-session.on('user_input.requested', (event) => {
-  // event.data.question: string — what the agent is asking
-  // event.data.choices: string[] — optional choices
-  // event.data.allowFreeform: boolean — whether free text is accepted
-  // event.data.requestId: string — correlation ID
-  //
-  // Use session.respondToUserInput(requestId, { answer, wasFreeform }) to respond.
-
-  const requestId = event.data.requestId;
-
-  pendingInputRequests.set(requestId, (input: string) => {
-    session.respondToUserInput(requestId, { answer: input, wasFreeform: true });
-  });
-
-  broadcast(session.id, {
-    type: 'approval.user_input_requested',
-    sessionId: session.id,
-    requestId,
-    prompt: event.data.question,
-  });
-});
-
-// Maps for pending callbacks
+// Maps for pending callbacks — keyed by a webapp-generated correlation ID
 const pendingApprovals = new Map<string, (approved: boolean) => void>();
 const pendingInputRequests = new Map<string, (input: string) => void>();
+
+// Passed as `onPermissionRequest` in SessionConfig.
+// The SDK invokes this callback and blocks until the returned Promise resolves.
+async function handlePermissionRequest(
+  request: unknown,
+  { sessionId }: { sessionId: string },
+): Promise<PermissionRequestResult> {
+  const correlationId = crypto.randomUUID();
+  return new Promise<PermissionRequestResult>((resolve) => {
+    pendingApprovals.set(correlationId, (approved: boolean) => {
+      resolve(approved
+        ? { kind: 'approved' }
+        : { kind: 'denied-interactively-by-user' });
+    });
+    broadcast(sessionId, {
+      type: 'approval.permission_requested',
+      requestId: correlationId,
+      permissionRequest: request,
+    });
+  });
+}
+
+// Passed as `onUserInputRequest` in SessionConfig.
+async function handleUserInputRequest(
+  request: { question: string; choices?: string[]; allowFreeform?: boolean },
+  { sessionId }: { sessionId: string },
+): Promise<string> {
+  const correlationId = crypto.randomUUID();
+  return new Promise<string>((resolve) => {
+    pendingInputRequests.set(correlationId, (input: string) => {
+      resolve(input);
+    });
+    broadcast(sessionId, {
+      type: 'approval.user_input_requested',
+      requestId: correlationId,
+      prompt: request.question,
+    });
+  });
+}
 ```
 
 ### 3.3 MCP Server (Tool Host)
 
 #### Why the Webapp Needs Its Own MCP Server
 
-The `@github/copilot` SDK expects an MCP endpoint for tool invocations. In VS Code, the extension host runs this server and exposes VS Code-specific tools (`get_selection`, `open_diff`, etc.). The webapp must provide equivalent tools — or the agent will lack situational awareness and file-editing capability.
+The `@github/copilot-sdk` expects tools to be registered via `defineTool()` when creating a session. In VS Code, the extension host exposes VS Code-specific tools (`get_selection`, `open_diff`, etc.) through its own mechanism. The webapp must provide equivalent tools — or the agent will lack situational awareness and file-editing capability.
 
 #### Setup
 
@@ -780,11 +758,11 @@ function writeLockFile(config: {
 The SDK manages `~/.copilot/session-state/{sessionId}/events.jsonl` automatically. Each line is a JSON object:
 
 ```jsonc
-{"type":"assistant.message_delta","data":{"content":"Hello"},"id":"evt_001","timestamp":"2026-06-21T12:00:00.000Z","parentId":null}
+{"type":"assistant.message_delta","data":{"deltaContent":"Hello"},"id":"evt_001","timestamp":"2026-06-21T12:00:00.000Z","parentId":null}
 {"type":"assistant.message","data":{"content":"Hello, how can I help?"},"id":"evt_002","timestamp":"2026-06-21T12:00:01.000Z","parentId":"evt_001"}
 ```
 
-The webapp should **not** write to `events.jsonl` directly — the SDK handles persistence. For listing sessions, scan the directory:
+The webapp should **not** write to `events.jsonl` directly — the SDK handles persistence. For listing sessions, prefer `client.listSessions()` which returns `SessionMetadata[]`. The filesystem scan below is a fallback for discovering sessions the SDK hasn't loaded:
 
 ```typescript
 function listSessionsFromDisk(): Array<{ id: string; modifiedAt: number }> {
@@ -862,7 +840,7 @@ CREATE INDEX IF NOT EXISTS idx_file_edits_session ON file_edits(session_id);
 |--------|------|-------------|-------------|----------|
 | `GET` | `/api/sessions` | List all sessions | — | `{ sessions: SessionSummary[] }` |
 | `GET` | `/api/sessions/:id` | Session details + history | — | `{ session: SessionDetail }` |
-| `POST` | `/api/sessions` | Create a new session | `{ workingDirectory, model?, agentMode? }` | `{ session: SessionSummary }` |
+| `POST` | `/api/sessions` | Create a new session | `{ workingDirectory, model?, mode? }` | `{ session: SessionSummary }` |
 | `DELETE` | `/api/sessions/:id` | Delete a session | — | `204 No Content` |
 | `GET` | `/api/hosts` | List active IDE hosts | — | `{ hosts: LockFileEntry[] }` |
 | `GET` | `/health` | Health check | — | `{ status: 'ok', uptime: number }` |
@@ -1194,7 +1172,7 @@ interface StreamingState {
 // In WebSocket handler:
 function handleEvent(msg: WebSocketMessage): void {
   if (msg.type === 'event.assistant.message_delta') {
-    useStreamingStore.getState().appendDelta(msg.sessionId, msg.data.content);
+    useStreamingStore.getState().appendDelta(msg.sessionId, msg.data.deltaContent);
   }
   if (msg.type === 'event.assistant.message') {
     // Final message — replace delta buffer with structured content
@@ -1276,14 +1254,14 @@ sequenceDiagram
     participant WS as WebSocket
     participant UI as Browser UI
 
-    Agent->>Backend: permission.requested (event.data.permissionRequest, event.data.requestId)
-    Backend->>Backend: Store respond callback (requestId → fn)
-    Backend->>WS: approval.permission_requested { requestId, toolName, params }
+    Agent->>Backend: onPermissionRequest callback invoked (request, { sessionId })
+    Backend->>Backend: Create deferred Promise, store resolve callback
+    Backend->>WS: approval.permission_requested { requestId, permissionRequest }
     WS->>UI: Render approval dialog
 
     UI->>WS: approval.respond { requestId, approved: true }
-    WS->>Backend: Look up pendingApprovals[requestId]
-    Backend->>Agent: session.respondToPermission(requestId, 'allow')
+    WS->>Backend: Look up pendingApprovals[requestId], invoke resolve
+    Backend->>Agent: Deferred Promise resolves → { kind: 'approved' }
     Note over Agent: Continues execution
 ```
 
@@ -1406,80 +1384,7 @@ app.get('/', async (c) => {
 
 The frontend reads `window.__COPILOT_NONCE__` and includes it as `Authorization: Nonce {value}` on every `fetch()` call and as a query parameter (`?nonce={value}`) on the WebSocket upgrade request (since the `WebSocket` constructor does not support custom headers).
 
-### 5.2 Tunnel Mode (cloudflared)
-
-When exposed via `cloudflared tunnel`, nonce auth is insufficient — the nonce would need to travel over the network.
-
-#### Authentication Options
-
-| Option | Complexity | Security | Recommendation |
-|--------|-----------|----------|----------------|
-| **Cloudflare Access** | Medium | High | Preferred for teams. Zero-trust; identity-aware; no code changes. |
-| **Basic Auth (htpasswd)** | Low | Medium | Acceptable for personal use. Add Hono middleware. |
-| **OAuth2 (GitHub)** | High | High | Natural fit since users already have GitHub accounts. |
-| **Pre-shared token** | Low | Low | Better than nonce, but still a static secret. Last resort. |
-
-#### Recommended: Cloudflare Access + Bearer Token
-
-```typescript
-// ── Auth middleware for tunnel mode ────────────────────────────
-import { verify } from 'jsonwebtoken';
-import type { Context, Next } from 'hono';
-
-interface AuthConfig {
-  readonly mode: 'local' | 'tunnel';
-  readonly nonce?: string;              // local mode
-  readonly jwtSecret?: string;          // tunnel mode
-  readonly cloudflareTeamDomain?: string; // e.g., 'myteam.cloudflareaccess.com'
-}
-
-function authMiddleware(config: AuthConfig) {
-  return async (c: Context, next: Next) => {
-    if (config.mode === 'local') {
-      // Nonce-based
-      if (c.req.header('authorization') !== `Nonce ${config.nonce}`) {
-        return c.json({ error: 'Invalid nonce' }, 401);
-      }
-      return next();
-    }
-
-    // Tunnel mode: validate Cloudflare Access JWT
-    const cfAuth = c.req.header('cf-access-jwt-assertion');
-    if (cfAuth && config.cloudflareTeamDomain) {
-      // Validate against Cloudflare's JWKS endpoint
-      // https://{team}.cloudflareaccess.com/cdn-cgi/access/certs
-      try {
-        await validateCloudflareJwt(cfAuth, config.cloudflareTeamDomain);
-        return next();
-      } catch {
-        return c.json({ error: 'Invalid CF token' }, 403);
-      }
-    }
-
-    // Fallback: Bearer token
-    const bearer = c.req.header('authorization')?.replace('Bearer ', '');
-    if (bearer && config.jwtSecret) {
-      try {
-        verify(bearer, config.jwtSecret);
-        return next();
-      } catch {
-        return c.json({ error: 'Invalid token' }, 401);
-      }
-    }
-
-    return c.json({ error: 'Authentication required' }, 401);
-  };
-}
-```
-
-#### Additional Tunnel Controls
-
-| Control | Implementation |
-|---------|---------------|
-| **CORS** | Set `Access-Control-Allow-Origin` to the tunnel hostname |
-| **CSP** | `Content-Security-Policy: default-src 'self'; connect-src 'self' wss://{tunnel-host}` |
-| **Session tokens** | Issue short-lived JWTs (1h expiry) after initial auth; refresh on activity |
-| **WS auth** | Validate token on WebSocket upgrade (`connection` event) before accepting |
+> **Remote Access:** For tunnel mode, JWT authentication, and cloudflared setup, see [09-deployment.md](./09-deployment.md).
 
 ---
 
@@ -1504,7 +1409,7 @@ type ClientMessage =
       requestId?: string;
       workingDirectory: string;
       model?: string;
-      agentMode?: 'interactive' | 'autopilot' | 'plan';
+      mode?: 'interactive' | 'autopilot' | 'plan';
     }
   | {
       type: 'session.load';
@@ -1515,7 +1420,7 @@ type ClientMessage =
       type: 'session.send';
       sessionId: string;
       prompt: string;
-      agentMode?: 'interactive' | 'autopilot' | 'plan';
+      mode?: 'interactive' | 'autopilot' | 'plan';
       attachments?: Array<{ type: string; content: string }>;
     }
   | {
@@ -1601,7 +1506,7 @@ type ServerMessage =
   | {
       type: 'event.assistant.message_delta';
       sessionId: string;
-      data: { content: string };
+      data: { deltaContent: string };
       timestamp: number;
     }
   | {
@@ -1686,12 +1591,12 @@ sequenceDiagram
     participant Browser
     participant WS as WebSocket
     participant Backend
-    participant SDK as @github/copilot
+    participant SDK as @github/copilot-sdk
     participant API as Copilot API
 
-    Browser->>WS: session.send { sessionId, prompt, agentMode }
+    Browser->>WS: session.send { sessionId, prompt, mode }
     WS->>Backend: dispatch to active session
-    Backend->>SDK: session.send({ prompt, agentMode })
+    Backend->>SDK: session.rpc.mode.set({ mode }) then session.send({ prompt })
     SDK->>API: POST /chat/completions (streaming)
 
     loop Streaming response
@@ -1708,8 +1613,8 @@ sequenceDiagram
     WS-->>Browser: Show approval dialog
 
     Browser->>WS: approval.respond { requestId, approved: true }
-    WS->>Backend: Look up callback, invoke respondToPermission
-    Backend->>SDK: session.respondToPermission(requestId, 'allow')
+    WS->>Backend: Look up deferred callback, resolve Promise
+    Backend->>SDK: onPermissionRequest Promise resolves → { kind: 'approved' }
 
     SDK-->>Backend: tool.execution_start
     Backend-->>WS: event.tool.execution_start
@@ -1807,7 +1712,7 @@ sequenceDiagram
 | Task | Deliverable |
 |------|-------------|
 | Project scaffolding | `npm init`, TypeScript config, Hono + `@hono/node-ws` setup |
-| SDK integration | `LocalSessionManager` creation, `createSession`, `loadSession` |
+| SDK integration | `CopilotClient` creation, `createSession`, `loadSession` |
 | Event relay | Wire all SDK events to WebSocket broadcast |
 | REST endpoints | `GET /api/sessions`, `POST /api/sessions`, `DELETE /api/sessions/:id` |
 | Session list | Filesystem scan of `~/.copilot/session-state/` |
@@ -1858,14 +1763,7 @@ sequenceDiagram
 
 ### Phase 5: Remote Access
 
-**Goal:** Secure access via `cloudflared tunnel`.
-
-| Task | Deliverable |
-|------|-------------|
-| Auth middleware | Token-based auth for tunnel mode |
-| `cloudflared` integration | Startup script or npm script |
-| CORS configuration | Dynamic origin based on tunnel hostname |
-| WS auth | Token validation on upgrade |
+**Goal:** Secure access via `cloudflared tunnel`. See [09-deployment.md](./09-deployment.md) for full details.
 
 **Validation:** Access the webapp from a phone over a Cloudflare tunnel.
 
@@ -1890,7 +1788,7 @@ sequenceDiagram
 |-----------|---------|--------|-------|
 | **Design philosophy** | Desktop-first; Electron window fills screen | **Mobile-first**; 440×956 (iPhone 16 Pro Max) primary viewport; desktop secondary | All base styles target mobile; wider layouts additive |
 | **Process model** | Multi-process (main, renderer, extension host) | Single Node.js process | Simpler IPC; no Electron |
-| **SDK hosting** | Sessions Layer via `CopilotChatSessionsProvider`; extension host bridges SDK | Direct `LocalSessionManager` in main process | No provider registry needed |
+| **SDK hosting** | Sessions Layer via `CopilotChatSessionsProvider`; extension host bridges SDK | Direct `CopilotClient` in main process | No provider registry needed |
 | **Session scope** | Copilot CLI sessions + cloud agents + remote copilot | **Copilot CLI sessions only** | No cloud agent or remote copilot integration |
 | **MCP transport** | Unix socket, extension host manages lifecycle | Unix socket, same process hosts both client (SDK) and server | Loopback within one process |
 | **UI framework** | VS Code workbench (custom web components) | React 19 SPA + shadcn/ui AI + Radix Primitives | Full control over rendering; touch-optimized |
@@ -1980,7 +1878,7 @@ Agent mode affects whether tools require explicit approval:
 | `autopilot` | Low-risk tools run automatically; high-risk tools require approval |
 | `plan` | Agent proposes a plan; user approves execution; then tools run per autopilot rules |
 
-The webapp must respect these semantics. The `'plan-mode'` and `'ask-user'` entries in `sessionCapabilities` tell the SDK that the webapp can handle approval dialogs and user input requests — without them, the agent may refuse to invoke tools or ask questions.
+The webapp must respect these semantics. Providing `onPermissionRequest` and `onUserInputRequest` callbacks in `SessionConfig` signals to the SDK that the webapp can handle approval dialogs and user input requests. Without these callbacks, the agent may refuse to invoke tools or ask questions.
 
 ### 9.5 300-Second Idle Timeout
 
@@ -2020,12 +1918,12 @@ class SessionMutex {
 const sessionMutex = new SessionMutex();
 
 // Usage in message handler:
-async function handleSendMessage(sessionId: string, prompt: string, agentMode: string): Promise<void> {
+async function handleSendMessage(sessionId: string, prompt: string, mode: string): Promise<void> {
   const release = await sessionMutex.acquire(sessionId);
   try {
     const session = activeSessions.get(sessionId);
     if (!session) throw new Error('Session not found');
-    await sendMessage(session, prompt, agentMode as 'interactive' | 'autopilot' | 'plan');
+    await sendMessage(session, prompt, mode as 'interactive' | 'autopilot' | 'plan');
   } finally {
     release();
   }
@@ -2167,22 +2065,21 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@github/copilot":               "^1.0.24",
+    "@github/copilot-sdk":           "^0.2.2",
     "@modelcontextprotocol/sdk":     "^1.29.0",
     "hono":                          "^4.12.0",
     "@hono/node-server":             "^1.19.0",
     "@hono/node-ws":                 "^1.3.0",
     "@hono/mcp":                     "^0.2.5",
     "ws":                            "^8.20.0",
-    "jsonwebtoken":                  "^9.0.0",
     "better-sqlite3":                "^12.8.0",
-    "marked":                        "^18.0.0"
+    "marked":                        "^18.0.0",
+    "zod":                           "^3.25.0"
   },
   "devDependencies": {
     "@types/node":                   "^24.0.0",
     "@types/ws":                     "^8.5.0",
     "@types/better-sqlite3":         "^7.6.0",
-    "@types/jsonwebtoken":           "^9.0.0",
     "tsx":                           "^4.21.0",
     "typescript":                    "^6.0.0",
     "eslint":                        "^10.2.0",
@@ -2200,7 +2097,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 | **RAM** | 512 MB (backend only) | 1 GB (with frontend build) |
 | **Disk** | 100 MB (node_modules) + session data | 500 MB |
 | **GitHub** | Active Copilot subscription | Copilot Business/Enterprise (for extended features) |
-| **cloudflared** | v2026.1+ (tunnel mode only) | Latest stable |
+| **cloudflared** | v2026.1+ (tunnel mode only — see [09-deployment.md](./09-deployment.md)) | Latest stable |
 
 ### Project Structure
 
@@ -2216,11 +2113,11 @@ copilot-webapp/
 ├── src/
 │   ├── backend/
 │   │   ├── index.ts             # Entry point: Hono + @hono/node-ws + SDK setup
-│   │   ├── sdk.ts               # LocalSessionManager wrapper
+│   │   ├── sdk.ts               # CopilotClient wrapper
 │   │   ├── mcp.ts               # MCP tool host
 │   │   ├── ws.ts                # WebSocket handler + event relay
 │   │   ├── routes.ts            # REST API routes
-│   │   ├── auth.ts              # Auth middleware (nonce / JWT)
+│   │   ├── auth.ts              # Auth middleware (nonce authentication)
 │   │   ├── discovery.ts         # Lock file read/write
 │   │   ├── persistence.ts       # SQLite + filesystem session scanning
 │   │   ├── mutex.ts             # Per-session mutex
@@ -2274,7 +2171,7 @@ copilot-webapp/
 sequenceDiagram
     participant Main as index.ts
     participant MCP as MCP Tool Host
-    participant SDK as LocalSessionManager
+    participant SDK as CopilotClient
     participant HTTP as Hono Server
     participant WS as WebSocket Server
     participant FS as Filesystem
@@ -2283,7 +2180,7 @@ sequenceDiagram
     Main->>MCP: createMcpToolHost({ socketPath, nonce })
     MCP->>MCP: Listen on Unix socket
 
-    Main->>SDK: createSessionManager({ mcpSocketPath, nonce })
+    Main->>SDK: createClient({ clientName, defaultModel, workingDirectory })
     Main->>FS: writeLockFile({ socketPath, nonce, pid })
     Main->>HTTP: Create Hono app with auth middleware
     Main->>HTTP: Mount REST routes (/api/sessions, /health)
@@ -2300,7 +2197,7 @@ sequenceDiagram
 
 ```typescript
 async function gracefulShutdown(
-  manager: LocalSessionManager,
+  client: CopilotClient,
   mcpHost: { stop: () => void },
   lockFilePath: string,
   server: ReturnType<typeof import('@hono/node-server').serve>,
@@ -2308,37 +2205,40 @@ async function gracefulShutdown(
   console.log('Shutting down...');
 
   // 1. Close all WebSocket connections
-  for (const client of clients) {
-    client.ws.close(1001, 'Server shutting down');
+  for (const wsClient of clients) {
+    wsClient.ws.close(1001, 'Server shutting down');
   }
   clients.clear();
 
   // 2. Abort and close all active sessions
   for (const [sessionId] of activeSessions) {
     try {
-      await closeSession(manager, sessionId);
+      await closeSession(client, sessionId);
     } catch {
       // Best effort
     }
   }
 
-  // 3. Stop MCP tool host
+  // 3. Stop the CopilotClient (graceful shutdown of CLI process)
+  await client.stop();
+
+  // 4. Stop MCP tool host
   mcpHost.stop();
 
-  // 4. Remove lock file
+  // 5. Remove lock file
   try {
     unlinkSync(lockFilePath);
   } catch {
     // May already be removed
   }
 
-  // 5. Close HTTP server
+  // 6. Close HTTP server
   server.close();
 
   process.exit(0);
 }
 
 // Wire to process signals
-process.on('SIGTERM', () => gracefulShutdown(manager, mcpHost, lockFilePath, server));
-process.on('SIGINT', () => gracefulShutdown(manager, mcpHost, lockFilePath, server));
+process.on('SIGTERM', () => gracefulShutdown(client, mcpHost, lockFilePath, server));
+process.on('SIGINT', () => gracefulShutdown(client, mcpHost, lockFilePath, server));
 ```
