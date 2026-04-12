@@ -79,6 +79,7 @@ graph TB
 | [`07-ui-specification.md`](07-ui-specification.md) | Complete UI/UX specification: design tokens, component catalog, responsive layouts, animations, accessibility, and state management |
 | [`08-constraints-and-requirements.md`](08-constraints-and-requirements.md) | Constraints catalog, performance architecture, degradation thresholds, and architectural decisions |
 | [`09-deployment.md`](09-deployment.md) | Deployment and remote access: cloudflared tunnel setup, JWT authentication, and security controls for tunnel mode |
+| [`10-testing-strategy.md`](10-testing-strategy.md) | Comprehensive testing strategy: TDD/BDD workflow, unit/component/integration/E2E test specifications, constraint verification matrix (all 72 constraints), mock catalog, CI pipeline, and performance benchmarks |
 | [`VS_CODE_ALIGNMENT.md`](VS_CODE_ALIGNMENT.md) | Maintenance workflow: component mapping, upstream change detection, SDK upgrade procedures, documentation sync checklists, and drift detection automation |
 
 ## Key Design Principles
