@@ -23,6 +23,8 @@ A step-by-step guide for recreating the Copilot CLI session integration feature 
 
 ---
 
+> 📋 **Testing:** Write tests for each step before implementing — see [10-testing-strategy.md §14](./10-testing-strategy.md#14-tdd-implementation-workflow) for the TDD workflow.
+
 ## Step 1: Define the Session Data Model
 
 ### Rationale

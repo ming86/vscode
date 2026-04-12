@@ -8,6 +8,8 @@ This document defines what the Copilot CLI Session webapp **must do**, **cannot 
 
 > **Cross-reference:** For complete system requirements including Node.js, OS versions, and tooling, see [06-webapp-extraction-guide.md](./06-webapp-extraction-guide.md#system-requirements).
 
+> 📋 **Test Coverage:** Every constraint in this document maps to at least one test. See [10-testing-strategy.md §11](./10-testing-strategy.md#11-constraint-verification-matrix) for the full constraint-to-test mapping.
+
 ### How to Use This Document
 
 - **Before implementing a feature:** Check Sections 4–9 for applicable constraints. Use the constraint IDs (e.g., `SDK-06`, `TCH-03`) in code comments and PR descriptions.

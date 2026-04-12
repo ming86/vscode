@@ -1705,6 +1705,8 @@ sequenceDiagram
 
 ---
 
+> 📋 **Testing Strategy:** See [10-testing-strategy.md](./10-testing-strategy.md) for the complete testing approach including unit, component, integration, E2E, and AI-agent testing workflows.
+
 ## 7. Implementation Roadmap
 
 ### Phase 1: Backend Core + SDK Integration
