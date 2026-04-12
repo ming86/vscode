@@ -1,7 +1,7 @@
 # 10 — Testing Strategy
 
 > **Status:** Draft
-> Last updated: 2025-07-19
+> Last updated: 2026-04-12
 > Depends on: [05-implementation-guide.md](./05-implementation-guide.md), [08-constraints-and-requirements.md](./08-constraints-and-requirements.md)
 > Related: [09-deployment.md](./09-deployment.md), [04-data-models.md](./04-data-models.md)
 
@@ -182,7 +182,7 @@ Zustand stores are tested via their vanilla API (`getState()` / `subscribe()`). 
 | **useChatStore** | Add user/assistant messages in order; inline tool invocations; clear on session switch; **no write/persist methods** (read-only events.jsonl) | SDK-03, SDK-11, TCH-17 |
 | **useSessionStore** | Load sessions from disk directory structure; single active session mutex; pagination of session list; create + switch sessions | SDK-06, SDK-10, OPS-08, TCH-08 |
 | **useConnectionStore** | Connect/disconnect state transitions; exponential backoff (1→2→4→8→max 30s); backoff reset on success; auth token in connection | TCH-07, ARC-03, OPS-05, SEC-09 |
-| **useThemeStore** | Toggle between exactly 2 themes (Dark Modern, Light Modern); CSS custom properties update; persistence | SCP-03 |
+| **useThemeStore** | Toggle between 3 selection modes (`'light' \| 'dark' \| 'system'`); `resolvedTheme` always `'light' \| 'dark'`; system mode follows `prefers-color-scheme`; CSS custom properties update; persistence | SCP-03 |
 
 > **Architecture:** These 5 hooks are typed selectors over a single composed Zustand store (see doc 08 TCH-16). The full store has 7 slices; `useInputStore` and `useUIStore` are tested via component integration tests rather than isolated store tests.
 
@@ -334,6 +334,8 @@ Backend routes, middleware, and server-level security are tested against a real 
 | Hono route: GET /health | Returns `{ status: 'ok', uptime: number }` | OPS-06 |
 | Hono route: GET /api/sessions | Returns session list from disk | ARC-04 |
 | Hono route: GET /api/sessions/:id | Returns session details | ARC-04 |
+| Hono route: POST /api/sessions | Creates session on disk | ARC-04 |
+| Hono route: DELETE /api/sessions/:id | Removes session directory | ARC-04 |
 | Auth middleware: nonce validation | Reject requests without valid nonce header | SEC-02 |
 | Auth middleware: host header check | Reject non-localhost Host headers | SEC-03 |
 | WebSocket upgrade auth | Reject WS connections without valid token | SEC-10 |
@@ -515,12 +517,12 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 |----|-----------|-------------|-------------|
 | SCP-01 | CLI sessions only | Unit | useSessionStore |
 | SCP-02 | Local filesystem only | Unit | SDK client tests |
-| SCP-03 | Exactly two themes | Component + Visual | App + useThemeStore + visual regression |
+| SCP-03 | Three selection modes (light, dark, system); two rendered palettes | Component + Visual | App + useThemeStore + visual regression |
 | SCP-04 | No LSP client | Static | Code review / CI grep |
 | SCP-05 | No extension host | Static | Code review / CI grep |
 | SCP-06 | No offline mode | Unit | SDK client (no service worker) |
 
-### Security Constraints (SEC-01 — SEC-12)
+### Security Constraints (SEC-01 — SEC-12 (excluding SEC-07))
 
 | ID | Constraint | Test Type(s) | Verified In |
 |----|-----------|-------------|-------------|
@@ -640,8 +642,11 @@ No constraints are currently deferred.
 
 | Endpoint | Default Behavior | Override Pattern |
 |----------|-----------------|-----------------|
-| `GET /api/sessions` | Return 3 sessions | `server.use(rest.get('/api/sessions', ...))` |
+| `GET /api/sessions` | Return 3 sessions | `server.use(http.get('/api/sessions', ...))` |
 | `GET /api/sessions/:id` | Return active session | Override for error/empty states |
+| `POST /api/sessions` | Create new session | `server.use(http.post('/api/sessions', ...))` |
+| `DELETE /api/sessions/:id` | Return 204 No Content | `server.use(http.delete('/api/sessions/:id', ...))` |
+| `GET /api/hosts` | Return available hosts | `server.use(http.get('/api/hosts', ...))` |
 | `GET /health` | Return `{ status: "ok", uptime: 12345 }` | Override for unhealthy state |
 | WebSocket `/ws` | Auto-connect, echo | `createMockWebSocket()` for fine control |
 
@@ -711,7 +716,7 @@ Every phase follows red → green → refactor → verify.
 | 4. Core Components | MessageList, SessionList, etc. | Component tests (§5) | Visual baselines (§10) | ARC-02, ARC-04, TCH-02 |
 | 5. Interactive Features | ToolInvocation, Approval, etc. | Component tests (§5) | A11y tests (§9) | SEC-10, TCH-11, TCH-12 |
 | 6. Web Workers | Diff, markdown, tree workers | Worker tests + benchmarks (§4, §8) | Component integration | TCH-04, TCH-05, TCH-06 |
-| 7. Security | Nonce, CSP, host validation | Security tests (§4) | E2E security (§7) | SEC-01 to SEC-12 |
+| 7. Security | Nonce, CSP, host validation | Security tests (§4) | E2E security (§7) | SEC-01 to SEC-12 (excluding SEC-07; 11 total) |
 | 8. Integration | Store → Component → WS wiring | Integration tests (§6) | Cross-component flows | ARC-03, SDK-11 |
 | 9. E2E & Polish | Full workflows, mobile, perf | E2E (§7) + benchmarks (§8) | Visual regression (§10) | OPS-*, ARC-09 |
 
@@ -1052,6 +1057,8 @@ npm run dev  # Starts Vite dev server at http://localhost:5173
 "Open http://localhost:5173?nonce={DEV_NONCE} in Chrome
 and run the session list validation prompt"
 ```
+
+> **URL conventions:** During development, `npm run dev` starts Vite at `http://localhost:5173` with HMR proxy to the Hono backend at `http://localhost:3000`. E2E and AI-agent tests target the production-like Hono-served build at `http://localhost:3000` directly. The `?nonce=` parameter is required in both modes for session authentication (SEC-02).
 
 #### When to Use AI-Agent Testing vs. Automated Tests
 

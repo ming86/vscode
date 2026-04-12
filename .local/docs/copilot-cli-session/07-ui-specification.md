@@ -1836,8 +1836,8 @@ Complete Zustand store interface:
 
 interface AppState {
   // --- Theme ---
-  theme: 'light' | 'dark' | 'system';
-  resolvedTheme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'system';      // User selection — 'system' follows OS preference
+  resolvedTheme: 'light' | 'dark';          // Computed: actual rendered palette
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
 
   // --- Connection ---
@@ -1891,7 +1891,9 @@ interface AppState {
 }
 ```
 
-> **Implementation note:** `AppState` is the unified type definition. At runtime, it is composed from 7 independent slices via Zustand's slice pattern (`stores/index.ts`). Each slice is accessed through a typed selector hook (e.g., `useSessionStore`, `useChatStore`). See doc 06 §4 for the file structure.
+> **Theme model:** Two rendered palettes (light, dark). Three selection modes: explicit light, explicit dark, or system-follow (resolves via `prefers-color-scheme` to one of the two palettes).
+
+> **Implementation note:** `AppState` is the unified type definition. At runtime, it is composed from 7 independent slices via Zustand's slice pattern (`stores/index.ts`). Each slice is accessed through a typed selector hook (e.g., `useSessionStore`, `useChatStore`). See doc 06 "Project Structure" section (after §10 Dependencies) for the file structure.
 
 ```typescript
 interface SessionState {

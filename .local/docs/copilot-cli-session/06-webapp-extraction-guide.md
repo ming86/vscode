@@ -841,7 +841,7 @@ CREATE INDEX IF NOT EXISTS idx_file_edits_session ON file_edits(session_id);
 | Method | Path | Description | Request Body | Response |
 |--------|------|-------------|-------------|----------|
 | `GET` | `/api/sessions` | List all sessions | — | `{ sessions: SessionSummary[] }` |
-| `GET` | `/api/sessions/:id` | Session details + history | — | `{ session: SessionDetail }` |
+| `GET` | `/api/sessions/:id` | Session details + history | — | `{ session: SessionDetail }` — turns paginated; returns last 50 by default. Use `?before={turnId}&limit=N` for older history. |
 | `POST` | `/api/sessions` | Create a new session | `{ workingDirectory, model?, mode? }` | `{ session: SessionSummary }` |
 | `DELETE` | `/api/sessions/:id` | Delete a session | — | `204 No Content` |
 | `GET` | `/api/hosts` | List active IDE hosts | — | `{ hosts: LockFileEntry[] }` |
@@ -861,7 +861,9 @@ interface SessionSummary {
 }
 
 interface SessionDetail extends SessionSummary {
-  readonly turns: Turn[];
+  readonly turns: Turn[];           // Paginated window (last 50 by default)
+  readonly hasMore: boolean;        // True if older turns exist
+  readonly nextCursor?: string;     // turnId for ?before= pagination
   readonly fileEdits: FileEditRecord[];
 }
 
@@ -1165,19 +1167,21 @@ Message deltas arrive via WebSocket. The frontend accumulates them in a mutable 
 ```typescript
 // stores/streamingSlice.ts — Zustand slice for streaming state
 interface StreamingState {
-  activeDeltas: Map<string, string>; // sessionId → accumulated text
-  appendDelta: (sessionId: string, text: string) => void;
-  clearDelta: (sessionId: string) => void;
+  chunks: Record<string, string[]>;  // sessionId → buffered chunks
+  isStreaming: boolean;
+  appendChunk: (sessionId: string, chunk: { text: string }) => void;
+  flush: (sessionId: string) => string;  // concatenate + clear buffer
+  reset: (sessionId: string) => void;
 }
 
 // In WebSocket handler:
 function handleEvent(msg: WebSocketMessage): void {
   if (msg.type === 'event.assistant.message_delta') {
-    useStreamingStore.getState().appendDelta(msg.sessionId, msg.data.deltaContent);
+    useStreamingStore.getState().appendChunk(msg.sessionId, { text: msg.data.deltaContent });
   }
   if (msg.type === 'event.assistant.message') {
-    // Final message — replace delta buffer with structured content
-    useStreamingStore.getState().clearDelta(msg.sessionId);
+    // Final message — flush buffer, replace with structured content
+    useStreamingStore.getState().reset(msg.sessionId);
     useChatStore.getState().appendTurn(msg.sessionId, msg.data);
   }
 }
@@ -1651,12 +1655,16 @@ sequenceDiagram
 // }
 
 // ── GET /api/sessions/:id ─────────────────────────────────────
-// Returns full session detail including turn history.
+// Returns session detail with paginated turn history.
 // Loads from disk if not already in memory.
+//
+// Query params:
+//   ?before={turnId}  — fetch turns older than this ID (cursor pagination)
+//   ?limit={N}        — number of turns to return (default 50, max 200)
 //
 // Response 200:
 // {
-//   session: SessionDetail
+//   session: SessionDetail   // turns[], hasMore, nextCursor
 // }
 //
 // Response 404:
@@ -2154,7 +2162,7 @@ copilot-webapp/
 │       │   ├── SessionList.tsx
 │       │   ├── SessionDrawer.tsx  # Vaul drawer for mobile
 │       │   ├── ChatView.tsx
-│       │   ├── MessageRenderer.tsx  # shadcn/ui AI streaming markdown
+│       │   ├── MessageList.tsx       # shadcn/ui AI streaming markdown
 │       │   ├── ThinkingBlock.tsx    # Collapsible thinking display
 │       │   ├── ToolInvocation.tsx    # Tool invocation card
 │       │   ├── ChatInput.tsx
@@ -2171,6 +2179,8 @@ copilot-webapp/
 │   └── tunnel.sh                # Start cloudflared tunnel
 └── README.md
 ```
+
+> **Component naming:** This tree uses simplified file names for readability. The full component taxonomy with VS Code-aligned names (e.g., `ChatMarkdownContentPart`, `ChatCodeBlockContentPart`, `MessageList`) is defined in doc 07 §3. Implementation should follow doc 07's naming conventions.
 
 ---
 
