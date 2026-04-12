@@ -88,7 +88,7 @@ Tests are prioritized by impact × probability. High-priority areas get the most
 Vitest config pattern (key settings only):
 
 ```typescript
-// vitest.config.ts
+// vitest.config.ts — Vitest 4.x — requires Vite ≥ 6.0, Node ≥ 20
 export default defineConfig({
   test: {
     globals: true,
@@ -96,6 +96,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
       thresholds: { branches: 80, functions: 80, lines: 85, statements: 85 },
     },
   },
@@ -191,9 +192,9 @@ describe('useStreamingStore', () => {
 | `connect()` starts MCP server, blocks until handshake | SDK-01, SDK-02, SDK-08 |
 | `disconnect()` releases lock file + unix socket | SDK-07, OPS-02, OPS-03 |
 | `getCapabilities()` returns negotiated capabilities | SDK-05 |
-| Idle timeout disconnects after 30s | SDK-04 |
+| Idle timeout disconnects after 300s (5 minutes) | SDK-04 |
 | Stale lock detection + cleanup | OPS-04 |
-| GitHub token used for auth | SDK-12 |
+| GitHub token used for SDK-managed auth | SDK-12 |
 | Session directory structure validated | SDK-10 |
 | Agent mode communicated via capabilities | SDK-09 |
 
@@ -204,8 +205,8 @@ describe('useStreamingStore', () => {
 | Nonce generation: unique, cryptographically random | SEC-02, OPS-09 |
 | Nonce validation: accept valid, reject empty/tampered | SEC-02 |
 | Host header check: reject non-localhost | SEC-03 |
-| CSP header: restrictive policy generated correctly | SEC-06 |
-| JWT validation: accept valid, reject expired/malformed | SEC-08 |
+| CSP header: restrictive policy generated correctly | SEC-08 |
+| JWT validation: accept valid, reject expired/malformed | SEC-09 |
 | Unix socket permissions: 0600 | SEC-04 |
 
 ### 4.4 Worker & Data Mapper Tests
@@ -304,6 +305,29 @@ it('should update UI as streaming chunks arrive (TCH-03)', async () => {
 - Mock only the outermost boundary (WebSocket, HTTP, filesystem)
 - `waitFor` + `findBy*` for async state updates — never `sleep()`
 
+### 6.2 Backend Integration Tests
+
+Backend routes, middleware, and server-level security are tested against a real Hono server instance (no mocks for the server layer itself).
+
+| Test | What to Verify | Constraints |
+|------|---------------|-------------|
+| Hono route: GET /health | Returns `{ status: 'ok', uptime: number }` | OPS-06 |
+| Hono route: GET /sessions | Returns session list from disk | ARC-04 |
+| Hono route: GET /sessions/:id | Returns session details | ARC-04 |
+| Auth middleware: nonce validation | Reject requests without valid nonce header | SEC-02 |
+| Auth middleware: host header check | Reject non-localhost Host headers | SEC-03 |
+| WebSocket upgrade auth | Reject WS connections without valid token | SEC-10 |
+| CSP headers | Response includes correct Content-Security-Policy | SEC-08 |
+| CORS headers | Only localhost origin allowed, no wildcards | SEC-05 |
+| Server binding | Server binds to 127.0.0.1, rejects non-loopback | SEC-01 |
+| MCP socket permissions | Socket file created with 0o600, directory with 0o700 | SEC-04 |
+| Lock file lifecycle | Created on start, deleted on shutdown | SDK-07, OPS-02 |
+| Stale lock detection | Validates PID is alive before using lock | OPS-04 |
+| Tunnel auth (if tunnel active) | Additional auth beyond nonce | SEC-06 |
+| Tunnel tokens | JWT with 1-hour expiry, refresh on activity | SEC-09 |
+| Tool sandboxing | MCP tools cannot path-traverse above project root | SEC-11 |
+| Large events.jsonl | Backend handles multi-MB files without blocking | OPS-11 |
+
 ---
 
 ## 7. E2E Tests (Puppeteer/CDP)
@@ -319,6 +343,8 @@ All E2E tests use Puppeteer with headless Chrome. Setup helper provides `launchA
 | `waitForWebSocket()` | Poll `page.evaluate()` until WS connected |
 | `setMobileViewport(page)` | Set 375×667, touch emulation, mobile UA |
 
+> **Mobile/WebKit gap:** Puppeteer targets Chromium only. For PWA behaviors on iOS Safari/WebKit, add a manual smoke test checklist (not automated) covering: PWA installation prompt, standalone mode, viewport units (`100dvh`), touch gestures, and virtual keyboard behavior. See [§15 AI-Agent Testing](#15-ai-agent-driven-development-testing) for interactive validation workflows.
+
 ### E2E Scenario Coverage Map
 
 | Scenario | Steps | Constraints |
@@ -328,15 +354,15 @@ All E2E tests use Puppeteer with headless Chrome. Setup helper provides `launchA
 | **Send message + receive stream** | Type in input → press Enter → wait for `[data-testid="assistant-message"]` → assert content | ARC-03, SDK-11 |
 | **Tool invocation display** | Send message triggering tool → wait for `[data-testid="tool-invocation"]` → assert tool name | — |
 | **Concurrent tabs** | Open second tab → assert no errors → both tabs functional | OPS-10 |
-| **Mobile responsive** | Set viewport 375×667 → verify Vaul drawer renders, touch targets ≥44px, `100dvh`, viewport meta | ARC-08, TCH-09, TCH-10, TCH-11, TCH-13 |
+| **Mobile responsive** | Set viewport 375×667 → verify Vaul drawer renders, touch targets ≥44px, `100dvh`, viewport meta | ARC-09, TCH-09, TCH-10, TCH-11, TCH-13 |
 | **WebSocket resilience** | Force-close WS via `page.evaluate` → verify reconnect indicator → verify backoff timing → verify state sync | TCH-07, OPS-05 |
 | **Security: nonce required** | Request without nonce → assert 401 response | SEC-02 |
-| **Security: headers** | Check CSP header present and restrictive; CORS blocks non-localhost; Host header validated | SEC-03, SEC-05, SEC-06 |
+| **Security: headers** | Check CSP header present and restrictive; CORS blocks non-localhost; Host header validated | SEC-03, SEC-05, SEC-08 |
 | **Security: localhost only** | Assert server bound to 127.0.0.1 | SEC-01 |
-| **Security: no client secrets** | Search client bundle for API keys / tokens → assert none found | SEC-11 |
-| **Security: tunnel auth** | If tunnel active, assert auth required | SEC-12 |
-| **PWA** | Assert `manifest.json` served and valid; service worker registered | TCH-18 |
-| **Health check** | `GET /api/health` → assert 200 | OPS-06 |
+| **Security: no client secrets** | Search client bundle for API keys / tokens → assert none found | SEC-12 |
+| **Security: tunnel auth** | If tunnel active, assert auth required | SEC-06 |
+| **PWA** | Assert `manifest.json` served, valid, and includes `display: standalone` + `orientation: portrait-primary`. No service worker required. | TCH-18 |
+| **Health check** | `GET /health` → assert 200 | OPS-06 |
 | **Single deployable** | `npm start` launches complete app | ARC-05, OPS-01 |
 | **cloudflared optional** | App functions without cloudflared installed | OPS-07 |
 | **Session exclusivity** | Open same session in two contexts → assert mutex enforced | SDK-06, OPS-08 |
@@ -415,7 +441,9 @@ Uses **pixelmatch** + **pngjs**. Baselines in `src/test/fixtures/screenshots/`. 
 | Code block with highlighting | Component | Both | 0.1% |
 | Approval dialog | Component | Both | 0.1% |
 
-Visual tests validate ARC-09 (VS Code alignment) and SCP-03 (two themes).
+Visual tests validate ARC-10 (VS Code alignment) and SCP-03 (two themes).
+
+> **Vitest 4.x alternative:** Vitest 4.0+ includes built-in visual regression via `toMatchScreenshot()` in browser mode. If using Vitest's browser mode, this can replace the pixelmatch approach. See [Vitest 4.0 visual regression docs](https://vitest.dev/blog/vitest-4) for details.
 
 ### Visual Regression Workflow
 
@@ -437,15 +465,15 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 | SDK-01 | CopilotClient single entry point | Unit | SDK client tests |
 | SDK-02 | MCP server spawning on connect | Unit | SDK client tests |
 | SDK-03 | events.jsonl read-only | Unit | useChatStore (no write methods) |
-| SDK-04 | 30s idle timeout disconnect | Unit + E2E | SDK client + session lifecycle E2E |
+| SDK-04 | 300-second idle timeout disconnect | Unit + E2E | SDK client + session lifecycle E2E |
 | SDK-05 | Capabilities negotiation | Unit + Integration | SDK client + SDK→UI integration |
 | SDK-06 | Per-session mutex | Unit + E2E | useSessionStore + session exclusivity E2E |
 | SDK-07 | Lock file create/release | Unit | SDK client tests |
-| SDK-08 | MCP blocking until handshake | Unit | SDK client tests |
+| SDK-08 | MCP tool handlers block until user responds (Promise-based approval) | Unit | SDK client tests |
 | SDK-09 | Agent modes from capabilities | Integration | SDK→UI integration |
 | SDK-10 | Session directory structure | Unit + E2E | useSessionStore + session lifecycle E2E |
 | SDK-11 | EventEmitter streaming | Integration | WebSocket flow integration |
-| SDK-12 | GitHub token authentication | Unit | SDK client tests |
+| SDK-12 | SDK manages its own GitHub authentication (token refresh, OAuth, credentials internal) | Unit | SDK client tests |
 
 ### Architecture Constraints (ARC-01 — ARC-10)
 
@@ -457,9 +485,9 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 | ARC-04 | REST for queries, WS for real-time | Integration | Store→UI + session navigation |
 | ARC-05 | Single deployable artifact | E2E | `npm start` E2E |
 | ARC-06 | MCP unix socket transport | Unit | MCP server unit tests |
-| ARC-08 | Mobile-first responsive | E2E | Mobile responsive E2E |
-| ARC-09 | VS Code visual alignment | Visual | Visual regression tests |
-| ARC-10 | Lightweight provider interface | Unit | SDK client tests |
+| ARC-08 | Lightweight provider interface (~20-line SessionProvider abstraction) | Unit | Provider interface tests |
+| ARC-09 | Mobile-first responsive architecture (base styles at 440px, wider via min-width) | E2E | Mobile responsive E2E |
+| ARC-10 | Hybrid alignment with VS Code source (file naming 1:1 mapping, enums, CSS tokens) | Visual + Static | Visual regression + alignment map |
 
 ### Scope Constraints (SCP-01 — SCP-06)
 
@@ -481,18 +509,19 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 | SEC-03 | Host header validation | Unit + E2E | Security utils + security E2E |
 | SEC-04 | Unix socket permissions 0600 | Unit | MCP server tests |
 | SEC-05 | CORS restricts origins | E2E | Security E2E |
-| SEC-06 | Content Security Policy | Unit + E2E | CSP generator + security E2E |
-| SEC-08 | JWT token validation | Unit | Security utils |
-| SEC-09 | WebSocket auth token | Unit | useConnectionStore |
-| SEC-10 | Sandboxed tool approval | Component | PermissionCard + ApprovalDialog |
-| SEC-11 | No secrets in client bundle | Static + E2E | CI scan + security E2E |
-| SEC-12 | Tunnel authentication | E2E | Security E2E |
+| SEC-06 | Tunnel mode requires additional authentication (nonce insufficient when exposed via cloudflared) | Unit + E2E | Tunnel auth tests + security E2E |
+| SEC-07 | Reserved / future | — | — |
+| SEC-08 | Content Security Policy (default-src 'self'; connect-src 'self' wss://{tunnel-host}; script-src nonce) | Unit + E2E | CSP generator + security E2E |
+| SEC-09 | Short-lived session tokens in tunnel mode (JWTs with 1-hour expiry) | Unit | Security utils |
+| SEC-10 | WebSocket authentication on upgrade (validate token during connection event) | Unit + Integration | useConnectionStore + WS integration |
+| SEC-11 | Tool execution sandboxing (MCP tools run within session's workingDirectory, no path traversal) | Unit | MCP server tests |
+| SEC-12 | No secrets in client-side code (nonce is sole exception, injected at serve-time) | Static + E2E | CI scan + security E2E |
 
 ### Technical Constraints (TCH-01 — TCH-22)
 
 | ID | Constraint | Test Type(s) | Verified In |
 |----|-----------|-------------|-------------|
-| TCH-01 | CodeMirror renders without Shiki | Component | ChatCodeBlockContentPart |
+| TCH-01 | React does not control CodeMirror text state (no value/onChange) | Component | ChatCodeBlockContentPart |
 | TCH-02 | Virtualized lists | Component + Perf | SessionList + MessageList + benchmarks |
 | TCH-03 | Batched streaming renders | Unit + Perf | useStreamingStore + streaming bench |
 | TCH-04 | Diff computation in worker | Unit + Perf | DiffWorker + diff bench |
@@ -512,7 +541,7 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 | TCH-18 | PWA manifest | E2E | PWA E2E |
 | TCH-19 | Tailwind v4 CSS | Static | Build output analysis |
 | TCH-20 | Degradation thresholds | Unit + Perf | useStreamingStore + all benchmarks |
-| TCH-21 | Lazy loading heavy components | Component | App (dynamic imports) |
+| TCH-21 | Lazy loading with IntersectionObserver for images and attachments (>20 images triggers aggressive lazy loading) | Component | App (dynamic imports + IntersectionObserver) |
 | TCH-22 | rAF flush for streaming | Unit | useStreamingStore |
 
 ### Operational Constraints (OPS-01 — OPS-12)
@@ -524,7 +553,7 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 | OPS-03 | Unix socket cleanup on shutdown | Unit | MCP server tests |
 | OPS-04 | Stale lock detection | Unit | SDK client tests |
 | OPS-05 | Graceful reconnect + backoff reset | Unit + E2E | useConnectionStore + WS resilience E2E |
-| OPS-06 | Health check endpoint | E2E | `GET /api/health` E2E |
+| OPS-06 | Health check endpoint | E2E | `GET /health` E2E |
 | OPS-07 | cloudflared optional | E2E | App without cloudflared E2E |
 | OPS-08 | Session exclusivity | Unit + E2E | useSessionStore + session exclusivity E2E |
 | OPS-09 | Ephemeral unique nonces | Unit | Nonce generation tests |
@@ -538,7 +567,7 @@ All **72 constraints** are mapped:
 - **12 SDK** — 12 mapped (Unit + Integration + E2E)
 - **10 ARC** — 9 mapped (ARC-07 N/A)
 - **6 SCP** — 6 mapped (Unit + Static + Visual)
-- **12 SEC** — 11 mapped (SEC-07 N/A; Unit + E2E + Static)
+- **12 SEC** — 12 mapped (SEC-07 reserved/future; Unit + E2E + Static)
 - **22 TCH** — 22 mapped (Unit + Component + Perf + E2E)
 - **12 OPS** — 12 mapped (Unit + E2E + Static)
 
@@ -597,7 +626,7 @@ All **72 constraints** are mapped:
 |----------|-----------------|-----------------|
 | `GET /api/sessions` | Return 3 sessions | `server.use(rest.get('/api/sessions', ...))` |
 | `GET /api/sessions/:id` | Return active session | Override for error/empty states |
-| `GET /api/health` | Return `{ status: "ok" }` | Override for unhealthy state |
+| `GET /health` | Return `{ status: "ok" }` | Override for unhealthy state |
 | WebSocket `/ws` | Auto-connect, echo | `createMockWebSocket()` for fine control |
 
 ---
@@ -666,7 +695,7 @@ Every phase follows red → green → refactor → verify.
 | 6. Web Workers | Diff, markdown, tree workers | Worker tests + benchmarks (§4, §8) | Component integration | TCH-04, TCH-05, TCH-06 |
 | 7. Security | Nonce, CSP, host validation | Security tests (§4) | E2E security (§7) | SEC-01 to SEC-12 |
 | 8. Integration | Store → Component → WS wiring | Integration tests (§6) | Cross-component flows | ARC-03, SDK-11 |
-| 9. E2E & Polish | Full workflows, mobile, perf | E2E (§7) + benchmarks (§8) | Visual regression (§10) | OPS-*, ARC-08 |
+| 9. E2E & Polish | Full workflows, mobile, perf | E2E (§7) + benchmarks (§8) | Visual regression (§10) | OPS-*, ARC-09 |
 
 ### TDD Checklist (per feature)
 
@@ -758,6 +787,15 @@ The Chrome DevTools MCP server exposes ~30 tools. These are the ones most releva
 | `resize_page` | Responsive breakpoint testing | "Resize to 375px width and verify the session drawer" |
 
 ### 15.4 Development Testing Workflows
+
+> **Dev-mode instrumentation:** Some workflows below reference debug globals (e.g., `window.__ws`, store access via `evaluate_script`). For these to work, the app should expose debug hooks in development mode:
+> ```typescript
+> // main.tsx (development only)
+> if (import.meta.env.DEV) {
+>   window.__debugStores = { useSessionStore, useChatStore, useConnectionStore, useThemeStore, useStreamingStore };
+> }
+> ```
+> In production builds, these globals are tree-shaken away.
 
 #### Workflow 1: Component Visual Validation
 
@@ -933,9 +971,9 @@ CodeMirror is used for diffs (TCH-14), not Monaco."
 ```markdown
 # Prompt: PWA Installation
 "Check PWA readiness:
-1. Run Lighthouse audit → verify PWA score
-2. Check for manifest.json (TCH-18)
-3. Verify service worker registration
+1. Run Lighthouse audit → verify installability score
+2. Check for manifest.json with display: standalone and orientation: portrait-primary (TCH-18)
+3. Verify NO service worker is registered (SCP-06: no offline mode)
 4. Test add-to-home-screen prompt on mobile viewport"
 ```
 
