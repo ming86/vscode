@@ -163,7 +163,7 @@ This mapping enables automated drift detection: a CI script can diff the declare
 
 | Component | Package | Purpose |
 |-----------|---------|---------|
-| HTTP server | `hono` ^4.12.0 + `@hono/node-server` ^1.19.0 | REST endpoints, static file serving, MCP host |
+| HTTP server | `hono` ^4.12.12 + `@hono/node-server` ^1.19.13 | REST endpoints, static file serving, MCP host |
 | WebSocket | `@hono/node-ws` ^1.3.0 | Bidirectional event relay (integrated with Hono) |
 | WebSocket (peer dep) | `ws` ^8.20.0 | Underlying WebSocket implementation required by `@hono/node-ws` |
 | SDK | `@github/copilot-sdk` ^0.2.2 | Copilot SDK for session management (depends on `@github/copilot` CLI binary internally) |
@@ -912,12 +912,12 @@ The WebSocket connection at `/ws` uses a JSON-based message protocol. See [Secti
 | Chat UI base | **shadcn/ui AI components** (copy-paste, not dependency) | Streaming markdown, thinking blocks, tool call cards — pre-built patterns for LLM chat UX |
 | Interactive primitives | **Radix Primitives** (`@radix-ui/react-dialog`, `react-dropdown-menu`, `react-tooltip`, `react-scroll-area`, `react-separator`, `react-collapsible`, `react-toggle`, `react-visually-hidden`) | Accessible, unstyled, composable — no design system lock-in |
 | Mobile drawer | **Vaul** `^1.1.2` | Touch-friendly bottom sheet for session list on mobile; spring physics, drag-to-dismiss |
-| Command palette | **cmdk** `^1.1.0` | Fast fuzzy search for sessions, commands, model switching |
+| Command palette | **cmdk** `^1.1.1` | Fast fuzzy search for sessions, commands, model switching |
 | Markdown | `react-markdown` + `remark-gfm` + `rehype-raw` | Render assistant markdown with GFM tables, task lists, raw HTML blocks |
 | Syntax highlighting (read-only) | **Shiki** `^4.0.2` | High-fidelity, theme-accurate highlighting in code blocks (VS Code-compatible themes) |
 | Code editor (editable/diff) | **CodeMirror 6** (`@codemirror/view`, `@codemirror/state`, `@codemirror/merge`, `@uiw/react-codemirror`) | 15-20× lighter than Monaco; mobile-friendly touch handling; tree-shakable; diff views via `MergeView` from `@codemirror/merge` |
-| Virtualized lists | **@tanstack/react-virtual** `^3.13.0` | Renders only visible items in long session message lists; constant memory regardless of list length |
-| State | **Zustand** `^5.0.12` | Lightweight state management; stores session list, active chat, WebSocket state |
+| Virtualized lists | **@tanstack/react-virtual** `^3.13.23` | Renders only visible items in long session message lists; constant memory regardless of list length |
+| State | **Zustand** `^5.0.12` | Single store composed of 7 typed slices: sessions, chat, streaming, connection, theme, input, UI — exposed via selector hooks |
 | Icons | `lucide-react` | Clean, consistent iconography |
 | Utilities | `clsx` + `tailwind-merge` | Conditional class composition without conflicts |
 
@@ -1163,7 +1163,7 @@ function renderTurnContent(part: TurnContent): React.ReactNode {
 Message deltas arrive via WebSocket. The frontend accumulates them in a mutable buffer and renders on each frame:
 
 ```typescript
-// Zustand store slice for streaming state
+// stores/streamingSlice.ts — Zustand slice for streaming state
 interface StreamingState {
   activeDeltas: Map<string, string>; // sessionId → accumulated text
   appendDelta: (sessionId: string, text: string) => void;
@@ -2012,51 +2012,51 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
 ```jsonc
 {
   "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "@codemirror/view": "^6.41.0",
-    "@codemirror/state": "^6.5.0",
-    "@codemirror/language": "^6.11.0",
-    "@codemirror/commands": "^6.8.0",
-    "@codemirror/search": "^6.5.0",
-    "@codemirror/autocomplete": "^6.18.0",
-    "@codemirror/lang-javascript": "^6.2.0",
-    "@codemirror/lang-python": "^6.1.0",
-    "@codemirror/lang-html": "^6.4.0",
-    "@codemirror/lang-css": "^6.3.0",
-    "@codemirror/lang-json": "^6.0.0",
-    "@codemirror/lang-markdown": "^6.3.0",
-    "@codemirror/merge": "^6.12.0",
-    "@uiw/react-codemirror": "^4.25.0",
-    "@radix-ui/react-dialog": "^1.1.0",
-    "@radix-ui/react-dropdown-menu": "^2.1.0",
-    "@radix-ui/react-tooltip": "^1.1.0",
-    "@radix-ui/react-scroll-area": "^1.2.0",
-    "@radix-ui/react-separator": "^1.1.0",
-    "@radix-ui/react-collapsible": "^1.1.0",
-    "@radix-ui/react-toggle": "^1.1.0",
-    "@radix-ui/react-visually-hidden": "^1.1.0",
-    "@tanstack/react-virtual": "^3.13.0",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/language": "^6.12.3",
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/search": "^6.6.0",
+    "@codemirror/autocomplete": "^6.20.1",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/lang-html": "^6.4.11",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/merge": "^6.12.1",
+    "@uiw/react-codemirror": "^4.25.9",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-toggle": "^1.1.10",
+    "@radix-ui/react-visually-hidden": "^1.2.4",
+    "@tanstack/react-virtual": "^3.13.23",
     "vaul": "^1.1.2",
-    "cmdk": "^1.1.0",
+    "cmdk": "^1.1.1",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.0",
+    "remark-gfm": "^4.0.1",
     "rehype-raw": "^7.0.0",
     "shiki": "^4.0.2",
     "lucide-react": "^1.8.0",
-    "clsx": "^2.1.0",
+    "clsx": "^2.1.1",
     "tailwind-merge": "^3.5.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
-    "vite": "^8.0.0",
-    "@vitejs/plugin-react": "^6.0.0",
-    "typescript": "^6.0.0",
-    "tailwindcss": "^4.2.0",
-    "@tailwindcss/vite": "^4.2.0",
-    "tw-animate-css": "^1.2.0",
-    "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0"
+    "vite": "^8.0.8",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.2",
+    "tailwindcss": "^4.2.2",
+    "@tailwindcss/vite": "^4.2.2",
+    "tw-animate-css": "^1.4.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3"
   }
 }
 ```
@@ -2071,8 +2071,8 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
   "dependencies": {
     "@github/copilot-sdk":           "^0.2.2",
     "@modelcontextprotocol/sdk":     "^1.29.0",
-    "hono":                          "^4.12.0",
-    "@hono/node-server":             "^1.19.0",
+    "hono":                          "^4.12.12",
+    "@hono/node-server":             "^1.19.13",
     "@hono/node-ws":                 "^1.3.0",
     "@hono/mcp":                     "^0.2.5",
     "ws":                            "^8.20.0",
@@ -2085,7 +2085,7 @@ These thresholds are defined as constants in `chat/common/constants.ts` and shar
     "@types/ws":                     "^8.5.0",
     "@types/better-sqlite3":         "^7.6.0",
     "tsx":                           "^4.21.0",
-    "typescript":                    "^6.0.0",
+    "typescript":                    "^6.0.2",
     "eslint":                        "^10.2.0",
     "prettier":                      "^3.8.0"
   }
@@ -2131,9 +2131,14 @@ copilot-webapp/
 │       ├── main.tsx             # React entry
 │       ├── App.tsx              # Router + responsive shell
 │       ├── stores/
-│       │   ├── sessionStore.ts  # Session list + active session state
-│       │   ├── chatStore.ts     # Chat messages, streaming deltas
-│       │   └── wsStore.ts       # WebSocket connection state
+│       │   ├── index.ts              # Composed store — single create() call
+│       │   ├── sessionSlice.ts       # Session list, active session
+│       │   ├── chatSlice.ts          # Messages, turns
+│       │   ├── streamingSlice.ts     # Delta buffering, rAF flush
+│       │   ├── connectionSlice.ts    # WS status, backoff
+│       │   ├── themeSlice.ts         # Light/dark themes
+│       │   ├── inputSlice.ts         # Input value, agent mode
+│       │   └── uiSlice.ts            # Sidebar, drawer, scroll
 │       ├── hooks/
 │       │   ├── useWebSocket.ts  # Reconnecting WebSocket hook
 │       │   └── useMediaQuery.ts # Responsive breakpoint detection

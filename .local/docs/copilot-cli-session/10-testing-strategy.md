@@ -85,10 +85,28 @@ Tests are prioritized by impact × probability. High-priority areas get the most
 | API mock | **MSW** | Network-level interception |
 | Benchmarks | **vitest.bench** | Statistical micro-benchmarks |
 
+### Required Test Library Versions
+
+All test dependencies use caret ranges pinned to the latest verified version:
+
+| Library | Version | Purpose |
+|---------|---------|---------|
+| `vitest` | `^4.1.4` | Test runner and assertion framework |
+| `jsdom` | `^29.0.2` | Browser simulation environment |
+| `@testing-library/react` | `^16.3.2` | Component testing utilities |
+| `@testing-library/user-event` | `^14.6.1` | User interaction simulation |
+| `@testing-library/jest-dom` | `^6.9.1` | DOM assertion matchers |
+| `puppeteer` | `^24.40.0` | E2E browser automation (Chromium) |
+| `axe-core` | `^4.11.2` | WCAG 2.1 AA accessibility engine |
+| `vitest-axe` | `^0.1.0` | Vitest integration for axe-core |
+| `msw` | `^2.13.2` | Network-level API mocking |
+| `pixelmatch` | `^7.1.0` | Pixel-level screenshot comparison |
+| `pngjs` | `^7.0.0` | PNG encoding/decoding for visual tests |
+
 Vitest config pattern (key settings only):
 
 ```typescript
-// vitest.config.ts — Vitest 4.x — requires Vite ≥ 6.0, Node ≥ 20
+// vitest.config.ts — Vitest ^4.1.4 — requires Vite ^8.0.8, Node ≥ 20
 export default defineConfig({
   test: {
     globals: true,
@@ -166,6 +184,8 @@ Zustand stores are tested via their vanilla API (`getState()` / `subscribe()`). 
 | **useConnectionStore** | Connect/disconnect state transitions; exponential backoff (1→2→4→8→max 30s); backoff reset on success; auth token in connection | TCH-07, ARC-03, OPS-05, SEC-09 |
 | **useThemeStore** | Toggle between exactly 2 themes (Dark Modern, Light Modern); CSS custom properties update; persistence | SCP-03 |
 
+> **Architecture:** These 5 hooks are typed selectors over a single composed Zustand store (see doc 08 TCH-16). The full store has 7 slices; `useInputStore` and `useUIStore` are tested via component integration tests rather than isolated store tests.
+
 Store test pattern (one example for reference):
 
 ```typescript
@@ -232,7 +252,7 @@ All request/response boundaries must validate with Zod schemas. 100% coverage re
 | `SessionSchema` | Full session object | Missing id, invalid status, extra fields |
 | `EventSchema` | Each event type | Unknown type, missing timestamp |
 | `CapabilitiesSchema` | All capability flags | Missing required fields |
-| `HealthResponseSchema` | `{ status: "ok" }` | Missing status |
+| `HealthResponseSchema` | `{ status: "ok", uptime: 12345 }` | Missing status |
 
 ---
 
@@ -312,8 +332,8 @@ Backend routes, middleware, and server-level security are tested against a real 
 | Test | What to Verify | Constraints |
 |------|---------------|-------------|
 | Hono route: GET /health | Returns `{ status: 'ok', uptime: number }` | OPS-06 |
-| Hono route: GET /sessions | Returns session list from disk | ARC-04 |
-| Hono route: GET /sessions/:id | Returns session details | ARC-04 |
+| Hono route: GET /api/sessions | Returns session list from disk | ARC-04 |
+| Hono route: GET /api/sessions/:id | Returns session details | ARC-04 |
 | Auth middleware: nonce validation | Reject requests without valid nonce header | SEC-02 |
 | Auth middleware: host header check | Reject non-localhost Host headers | SEC-03 |
 | WebSocket upgrade auth | Reject WS connections without valid token | SEC-10 |
@@ -510,7 +530,6 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 | SEC-04 | Unix socket permissions 0600 | Unit | MCP server tests |
 | SEC-05 | CORS restricts origins | E2E | Security E2E |
 | SEC-06 | Tunnel mode requires additional authentication (nonce insufficient when exposed via cloudflared) | Unit + E2E | Tunnel auth tests + security E2E |
-| SEC-07 | Reserved / future | — | — |
 | SEC-08 | Content Security Policy (default-src 'self'; connect-src 'self' wss://{tunnel-host}; script-src nonce) | Unit + E2E | CSP generator + security E2E |
 | SEC-09 | Short-lived session tokens in tunnel mode (JWTs with 1-hour expiry) | Unit | Security utils |
 | SEC-10 | WebSocket authentication on upgrade (validate token during connection event) | Unit + Integration | useConnectionStore + WS integration |
@@ -565,9 +584,9 @@ This is the **core deliverable** of the testing strategy. Every constraint has a
 
 All **72 constraints** are mapped:
 - **12 SDK** — 12 mapped (Unit + Integration + E2E)
-- **10 ARC** — 9 mapped (ARC-07 N/A)
+- **9 ARC** — 9 mapped
 - **6 SCP** — 6 mapped (Unit + Static + Visual)
-- **12 SEC** — 12 mapped (SEC-07 reserved/future; Unit + E2E + Static)
+- **11 SEC** — 11 mapped (Unit + E2E + Static)
 - **22 TCH** — 22 mapped (Unit + Component + Perf + E2E)
 - **12 OPS** — 12 mapped (Unit + E2E + Static)
 
@@ -581,10 +600,7 @@ All **72 constraints** are mapped:
 
 ### Constraints Not Tested (with justification)
 
-| ID | Constraint | Why Not Tested |
-|----|-----------|----------------|
-| ARC-07 | Reserved / future | Not yet defined |
-| SEC-07 | Reserved / future | Not yet defined |
+No constraints are currently deferred.
 
 ---
 
@@ -626,7 +642,7 @@ All **72 constraints** are mapped:
 |----------|-----------------|-----------------|
 | `GET /api/sessions` | Return 3 sessions | `server.use(rest.get('/api/sessions', ...))` |
 | `GET /api/sessions/:id` | Return active session | Override for error/empty states |
-| `GET /health` | Return `{ status: "ok" }` | Override for unhealthy state |
+| `GET /health` | Return `{ status: "ok", uptime: 12345 }` | Override for unhealthy state |
 | WebSocket `/ws` | Auto-connect, echo | `createMockWebSocket()` for fine control |
 
 ---
@@ -683,13 +699,15 @@ All **72 constraints** are mapped:
 
 ## 14. TDD Implementation Workflow
 
+> **Note:** These TDD phases are a testing-oriented decomposition and do not map 1:1 to doc 05's implementation steps or doc 06 §7's roadmap phases.
+
 Every phase follows red → green → refactor → verify.
 
 | Phase | What to Build | Tests First | Tests After | Constraints Verified |
 |-------|--------------|-------------|-------------|---------------------|
 | 1. Scaffolding | Vite + React + Tailwind v4 | App renders, theme toggle | Build output | SCP-03, TCH-19 |
 | 2. Data Layer | Zustand stores, Zod schemas | All store tests (§4), schema validation | Integration (§6) | TCH-16, SDK-03, SDK-10 |
-| 3. SDK Integration | CopilotClient, MCP, WS | Client + wsStore tests (§4) | SDK→UI integration (§6) | SDK-01 to SDK-12, ARC-06 |
+| 3. SDK Integration | CopilotClient, MCP, WS | Client + connectionStore tests (§4) | SDK→UI integration (§6) | SDK-01 to SDK-12, ARC-06 |
 | 4. Core Components | MessageList, SessionList, etc. | Component tests (§5) | Visual baselines (§10) | ARC-02, ARC-04, TCH-02 |
 | 5. Interactive Features | ToolInvocation, Approval, etc. | Component tests (§5) | A11y tests (§9) | SEC-10, TCH-11, TCH-12 |
 | 6. Web Workers | Diff, markdown, tree workers | Worker tests + benchmarks (§4, §8) | Component integration | TCH-04, TCH-05, TCH-06 |
@@ -793,6 +811,8 @@ The Chrome DevTools MCP server exposes ~30 tools. These are the ones most releva
 > // main.tsx (development only)
 > if (import.meta.env.DEV) {
 >   window.__debugStores = { useSessionStore, useChatStore, useConnectionStore, useThemeStore, useStreamingStore };
+>   // Expose active WebSocket for disconnect testing
+>   window.__ws = null; // Set by useConnectionStore on connect
 > }
 > ```
 > In production builds, these globals are tree-shaken away.

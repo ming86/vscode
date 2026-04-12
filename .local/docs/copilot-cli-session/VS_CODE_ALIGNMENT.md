@@ -597,14 +597,14 @@ Current known-good versions. Update this table when upgrading any component.
 
 | Component | Version | Min Compatible | Last Verified | Notes |
 |-----------|---------|----------------|---------------|-------|
-| `@github/copilot-sdk` | 0.2.2 | 0.2.0 | 2026-04-21 | Public preview; breaking changes expected |
-| `@github/copilot` (CLI) | 1.0.24 | 1.0.21 | 2026-04-21 | Transitive dep of copilot-sdk |
-| SDK protocol | v3 | v2 | 2026-04-21 | Declared in `sdk-protocol-version.json` |
-| Node.js | 24.x LTS | 22.x | 2026-04-21 | SDK requires Node 18+; webapp requires Node 24+ (see Doc 06 §10) |
-| VS Code | 1.100+ | — | 2026-04-21 | Source reference only (not a runtime dep) |
-| Hono | 4.12.12 | 4.0.0 | 2026-04-21 | Pinned version at last audit; doc 06 uses semver range `^4.12.0` |
-| React | 19.2.5 | 19.0.0 | 2026-04-21 | |
-| TypeScript | 6.0.2 | 5.5.0 | 2026-04-21 | |
+| `@github/copilot-sdk` | 0.2.2 | 0.2.0 | 2026-04-12 | Public preview; breaking changes expected |
+| `@github/copilot` (CLI) | 1.0.24 | 1.0.21 | 2026-04-12 | Transitive dep of copilot-sdk |
+| SDK protocol | v3 | v2 | 2026-04-12 | Declared in `sdk-protocol-version.json` |
+| Node.js | 24.x LTS | 22.x | 2026-04-12 | SDK requires Node 18+; webapp requires Node 24+ (see Doc 06 §10) |
+| VS Code | 1.100+ | — | 2026-04-12 | Source reference only (not a runtime dep) |
+| Hono | 4.12.12 | 4.0.0 | 2026-04-12 | Pinned version at last audit; doc 06 uses semver range `^4.12.12` |
+| React | 19.2.5 | 19.0.0 | 2026-04-12 | |
+| TypeScript | 6.0.2 | 5.5.0 | 2026-04-12 | |
 
 ---
 

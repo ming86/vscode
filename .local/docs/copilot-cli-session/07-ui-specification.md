@@ -1889,7 +1889,11 @@ interface AppState {
   setCommandPaletteOpen: (open: boolean) => void;
   setScrolledToBottom: (atBottom: boolean) => void;
 }
+```
 
+> **Implementation note:** `AppState` is the unified type definition. At runtime, it is composed from 7 independent slices via Zustand's slice pattern (`stores/index.ts`). Each slice is accessed through a typed selector hook (e.g., `useSessionStore`, `useChatStore`). See doc 06 §4 for the file structure.
+
+```typescript
 interface SessionState {
   id: string;
   title: string;
